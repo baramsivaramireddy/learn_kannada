@@ -1,0 +1,176 @@
+- name: Deploy Learn Kannada application
+  hosts: myhosts
+  become: yes
+  vars:
+    app_dir: /opt/learn-kannada
+    repository_url: https://github.com/baramsivaramireddy/learn_kannada.git
+    app_user: learnkannada
+
+  tasks:
+    - name: Install operating-system packages
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - git
+          - nginx
+        state: present
+        update_cache: yes
+
+    - name: Download NodeSource setup script
+      ansible.builtin.get_url:
+        url: https://deb.nodesource.com/setup_22.x
+        dest: /tmp/nodesource-setup.sh
+        mode: '0755'
+
+    - name: Configure NodeSource repository
+      ansible.builtin.command: /tmp/nodesource-setup.sh
+      args:
+        creates: /etc/apt/sources.list.d/nodesource.list
+
+    - name: Install Node.js
+      ansible.builtin.apt:
+        name: nodejs
+        state: present
+        update_cache: yes
+
+    - name: Create application user
+      ansible.builtin.user:
+        name: '{{ app_user }}'
+        system: yes
+        create_home: yes
+        shell: /usr/sbin/nologin
+
+    - name: Create application directory
+      ansible.builtin.file:
+        path: '{{ app_dir }}'
+        state: directory
+        owner: '{{ app_user }}'
+        group: '{{ app_user }}'
+        mode: '0755'
+
+    - name: Clone or update application repository
+      ansible.builtin.git:
+        repo: '{{ repository_url }}'
+        dest: '{{ app_dir }}'
+        version: main
+        update: yes
+      become_user: '{{ app_user }}'
+
+    - name: Copy backend environment file
+      ansible.builtin.copy:
+        src: '{{ playbook_dir }}/../../backend/.env'
+        dest: '{{ app_dir }}/backend/.env'
+        owner: '{{ app_user }}'
+        group: '{{ app_user }}'
+        mode: '0600'
+
+    - name: Install backend dependencies
+      ansible.builtin.command: npm ci --include=dev
+      args:
+        chdir: '{{ app_dir }}/backend'
+      become_user: '{{ app_user }}'
+
+    - name: Generate Prisma client
+      ansible.builtin.command: npm run prisma:generate
+      args:
+        chdir: '{{ app_dir }}/backend'
+      become_user: '{{ app_user }}'
+
+    - name: Install frontend dependencies
+      ansible.builtin.command: npm ci
+      args:
+        chdir: '{{ app_dir }}/frontend'
+      become_user: '{{ app_user }}'
+
+    - name: Build frontend
+      ansible.builtin.command: npm run build
+      args:
+        chdir: '{{ app_dir }}/frontend'
+      become_user: '{{ app_user }}'
+
+    - name: Install backend systemd unit
+      ansible.builtin.template:
+        src: learn-kannada-backend.service
+        dest: /etc/systemd/system/learn-kannada-backend.service
+        mode: '0644'
+
+    - name: Configure Nginx reverse proxy
+      ansible.builtin.template:
+        src: learn-kannada.nginx
+        dest: /etc/nginx/sites-available/learn-kannada
+        mode: '0644'
+      notify: Reload Nginx
+
+    - name: Enable Learn Kannada Nginx site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/learn-kannada
+        dest: /etc/nginx/sites-enabled/learn-kannada
+        state: link
+      notify: Reload Nginx
+
+    - name: Disable the default Nginx site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Reload Nginx
+
+    - name: Validate Nginx configuration
+      ansible.builtin.command: nginx -t
+      changed_when: false
+
+    - name: Enable and restart backend service
+      ansible.builtin.systemd:
+        name: learn-kannada-backend
+        daemon_reload: yes
+        enabled: yes
+        state: restarted
+
+    - name: Enable and start Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: yes
+
+    - name: Wait for website
+      ansible.builtin.uri:
+        url: http://dev.learnkannada.co.in
+        method: GET
+        status_code: 200
+      register: website
+      until: website.status == 200
+      retries: 10
+      delay: 3
+
+    - name: Install Certbot and Nginx plugin
+      ansible.builtin.apt:
+        name:
+          - certbot
+          - python3-certbot-nginx
+        state: present
+        update_cache: yes
+
+    - name: Obtain Let's Encrypt certificate
+      ansible.builtin.command:
+        cmd: >
+          certbot --nginx
+          -d dev.learnkannada.co.in
+          --non-interactive
+          --agree-tos
+          -m baramsivarami@gmail.com
+          --redirect
+      args:
+        creates: /etc/letsencrypt/live/dev.learnkannada.co.in/fullchain.pem
+
+    - name: Verify HTTPS
+      ansible.builtin.uri:
+        url: https://dev.learnkannada.co.in
+        method: GET
+        status_code: 200
+        validate_certs: yes
+
+  handlers:
+    - name: Reload Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded

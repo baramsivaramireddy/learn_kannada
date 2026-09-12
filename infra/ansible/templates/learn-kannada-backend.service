@@ -1,0 +1,17 @@
+[Unit]
+Description=Learn Kannada Express API
+After=network.target
+
+[Service]
+Type=simple
+User=learnkannada
+Group=learnkannada
+WorkingDirectory=/opt/learn-kannada/backend
+Environment=NODE_ENV=production
+EnvironmentFile=-/opt/learn-kannada/backend/.env
+ExecStart=/usr/bin/node /opt/learn-kannada/backend/server.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
