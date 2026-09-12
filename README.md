@@ -55,7 +55,7 @@ The source repository is:
 https://github.com/baramsivaramireddy/learn_kannada.git
 ```
 
-The `main` branch is the deployment source. Ansible clones or updates it on the EC2 host at:
+The `basic-infra` branch is the deployment source. Ansible clones or updates it on the EC2 host at:
 
 ```text
 /opt/learn-kannada
@@ -65,7 +65,7 @@ The `main` branch is the deployment source. Ansible clones or updates it on the 
 
 ```mermaid
 flowchart TD
-	Developer[Developer] -->|git add / commit / push| GitHub[GitHub main branch]
+	Developer[Developer] -->|git add / commit / push| GitHub[GitHub basic-infra branch]
 	GitHub -->|git clone or git fetch| Ansible[Ansible from local machine]
 	Ansible -->|deploy over SSH| EC2[EC2 /opt/learn-kannada]
 	EC2 --> BackendBuild[backend npm ci + Prisma generate]
@@ -75,7 +75,7 @@ flowchart TD
 	StaticFiles --> Nginx[Nginx]
 ```
 
-Ansible also repairs an incomplete checkout. If `/opt/learn-kannada/.git` is missing, it recreates the directory and clones the repository. If the checkout exists but has a broken `origin`, it restores the remote and resets the working tree to `origin/main`.
+Ansible also repairs an incomplete checkout. If `/opt/learn-kannada/.git` is missing, it recreates the directory and clones the repository. If the checkout exists but has a broken `origin`, it restores the remote and resets the working tree to `origin/basic-infra`.
 
 Do not commit these files:
 
@@ -254,7 +254,7 @@ The playbook:
 - Configures Nginx to serve the frontend and proxy `/api/` to Express.
 - Obtains and verifies the HTTPS certificate with Certbot.
 
-The playbook checks Nginx through `127.0.0.1` with the production `Host` header. This avoids failing when the EC2 instance cannot resolve its own public DNS name, even though the site works from a browser.
+The playbook checks Nginx through `127.0.0.1` with the production `Host` header. The HTTP readiness check accepts `200` or an HTTPS redirect without following it. This avoids failing when the EC2 instance cannot resolve its own public DNS name, even though the site works from a browser. A separate local HTTPS check runs after Certbot configuration.
 
 The Git, npm, Prisma, and frontend build tasks run with the playbook's normal sudo privileges. This avoids an ACL compatibility issue on some Ubuntu images when Ansible tries to become the unprivileged `learnkannada` user. The application files are reassigned to `learnkannada` before the backend service starts.
 

@@ -179,7 +179,7 @@ export default function Home() {
           <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
             <div className="flex items-center gap-3 text-slate-300"><Icon name="deploy" /><p className="text-sm font-medium uppercase tracking-[0.18em] text-slate-400">Ansible deploys</p></div>
             <ol className="mt-5 space-y-3 text-sm leading-6 text-slate-300">
-              <li className="flex gap-3"><span className="font-mono text-cyan-300">01</span><span>SSH into the EC2 host and clone `main` from GitHub.</span></li>
+              <li className="flex gap-3"><span className="font-mono text-cyan-300">01</span><span>SSH into the EC2 host and clone the `basic-infra` branch from GitHub.</span></li>
               <li className="flex gap-3"><span className="font-mono text-cyan-300">02</span><span>Install Node.js, Nginx, dependencies, Prisma, and the 2 GB swap file.</span></li>
               <li className="flex gap-3"><span className="font-mono text-cyan-300">03</span><span>Build the static Next.js export into `frontend/out`.</span></li>
               <li className="flex gap-3"><span className="font-mono text-cyan-300">04</span><span>Run Express with systemd and configure Nginx plus HTTPS.</span></li>
