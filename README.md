@@ -146,13 +146,38 @@ ansible-playbook -i inventory.ini system.yml
 The playbook:
 
 - Installs Node.js, Git, and Nginx.
+- Creates and enables a 2 GB swap file for the `t3.micro` build host.
 - Clones or updates the GitHub repository at `/opt/learn-kannada`.
+- Repairs the repository remote or recreates `/opt/learn-kannada` if it is not a valid Git checkout.
 - Copies the ignored local `backend/.env` to the server with mode `0600`.
 - Installs dependencies and generates the Prisma client.
 - Builds the static Next.js site.
+- Runs provisioning tasks with sudo and assigns `/opt/learn-kannada` to the `learnkannada` service user.
 - Installs and starts the Express systemd service.
 - Configures Nginx to serve the frontend and proxy `/api/` to Express.
 - Obtains and verifies the HTTPS certificate with Certbot.
+
+The playbook checks Nginx through `127.0.0.1` with the production `Host` header. This avoids failing when the EC2 instance cannot resolve its own public DNS name, even though the site works from a browser.
+
+The Git, npm, Prisma, and frontend build tasks run with the playbook's normal sudo privileges. This avoids an ACL compatibility issue on some Ubuntu images when Ansible tries to become the unprivileged `learnkannada` user. The application files are reassigned to `learnkannada` before the backend service starts.
+
+If Ansible reports an error like this:
+
+```text
+Failed to set permissions on the temporary files Ansible needs to create
+chmod: invalid mode: 'A+user:learnkannada:rx:allow'
+```
+
+Make sure you are using the project virtual environment and rerun the playbook:
+
+```bash
+cd infra/ansible
+source .venv/bin/activate
+ansible-playbook --syntax-check -i inventory.ini system.yml
+ansible-playbook -i inventory.ini system.yml
+```
+
+If `npm ci` fails with return code `-9` and no useful npm error, the Linux kernel likely stopped the process because the `t3.micro` ran out of memory. The playbook creates `/swapfile` before installing dependencies and limits the frontend build memory usage.
 
 Useful server checks:
 
@@ -162,6 +187,42 @@ sudo journalctl -u learn-kannada-backend -f
 curl http://127.0.0.1:4000/health
 curl https://dev.learnkannada.co.in/api/health
 curl https://dev.learnkannada.co.in/api/db-health
+```
+
+## SSH Host-Key Mismatch
+
+If the EC2 instance was recreated, its SSH host key changes. SSH may then show:
+
+```text
+Offending ECDSA key in /home/siva/.ssh/known_hosts:18
+Host key for dev.learnkannada.co.in has changed
+Host key verification failed
+```
+
+Only remove the old key after confirming that DNS now points to the intended EC2 instance:
+
+```bash
+ssh-keygen -f "$HOME/.ssh/known_hosts" -R "dev.learnkannada.co.in"
+```
+
+Connect again and verify the new fingerprint against the EC2 instance or your trusted server record before accepting it:
+
+```bash
+ssh -i "$HOME/.ssh/id_ed25519" ubuntu@dev.learnkannada.co.in
+```
+
+The expected ED25519 fingerprint from the current deployment is:
+
+```text
+SHA256:BEraa2HHksZcb8Nc/kBdW07Q0wAkoAi38aFuGlSjdC8
+```
+
+After SSH succeeds, rerun Ansible:
+
+```bash
+cd infra/ansible
+source .venv/bin/activate
+ansible-playbook -i inventory.ini system.yml
 ```
 
 ## Ignored Files

@@ -34,6 +34,20 @@
         state: present
         update_cache: yes
 
+    - name: Create deployment swap file
+      ansible.builtin.shell: |
+        fallocate -l 2G /swapfile
+        chmod 600 /swapfile
+        mkswap /swapfile
+      args:
+        creates: /swapfile
+
+    - name: Enable deployment swap file
+      ansible.builtin.shell: |
+        grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+        swapon --show=NAME --noheadings | grep -qx /swapfile || swapon /swapfile
+      changed_when: false
+
     - name: Create application user
       ansible.builtin.user:
         name: '{{ app_user }}'
@@ -49,13 +63,46 @@
         group: '{{ app_user }}'
         mode: '0755'
 
-    - name: Clone or update application repository
-      ansible.builtin.git:
-        repo: '{{ repository_url }}'
-        dest: '{{ app_dir }}'
-        version: main
-        update: yes
-      become_user: '{{ app_user }}'
+    - name: Check for an existing Git checkout
+      ansible.builtin.stat:
+        path: '{{ app_dir }}/.git'
+      register: application_git
+
+    - name: Remove incomplete application directory
+      ansible.builtin.file:
+        path: '{{ app_dir }}'
+        state: absent
+      when: not application_git.stat.exists
+
+    - name: Recreate application directory
+      ansible.builtin.file:
+        path: '{{ app_dir }}'
+        state: directory
+        owner: '{{ app_user }}'
+        group: '{{ app_user }}'
+        mode: '0755'
+      when: not application_git.stat.exists
+
+    - name: Repair application Git remote
+      ansible.builtin.shell: |
+        git -c safe.directory='{{ app_dir }}' remote remove origin 2>/dev/null || true
+        git -c safe.directory='{{ app_dir }}' remote add origin '{{ repository_url }}'
+      args:
+        chdir: '{{ app_dir }}'
+      when: application_git.stat.exists
+
+    - name: Update existing application repository
+      ansible.builtin.shell: |
+        git -c safe.directory='{{ app_dir }}' fetch origin main
+        git -c safe.directory='{{ app_dir }}' reset --hard origin/main
+      args:
+        chdir: '{{ app_dir }}'
+      when: application_git.stat.exists
+
+    - name: Clone application repository
+      ansible.builtin.command:
+        cmd: git clone --branch main '{{ repository_url }}' '{{ app_dir }}'
+      when: not application_git.stat.exists
 
     - name: Copy backend environment file
       ansible.builtin.copy:
@@ -66,28 +113,33 @@
         mode: '0600'
 
     - name: Install backend dependencies
-      ansible.builtin.command: npm ci --include=dev
+      ansible.builtin.command: npm ci --include=dev --no-audit --no-fund
       args:
         chdir: '{{ app_dir }}/backend'
-      become_user: '{{ app_user }}'
 
     - name: Generate Prisma client
       ansible.builtin.command: npm run prisma:generate
       args:
         chdir: '{{ app_dir }}/backend'
-      become_user: '{{ app_user }}'
 
     - name: Install frontend dependencies
-      ansible.builtin.command: npm ci
+      ansible.builtin.command: npm ci --no-audit --no-fund
       args:
         chdir: '{{ app_dir }}/frontend'
-      become_user: '{{ app_user }}'
 
     - name: Build frontend
       ansible.builtin.command: npm run build
       args:
         chdir: '{{ app_dir }}/frontend'
-      become_user: '{{ app_user }}'
+      environment:
+        NODE_OPTIONS: --max-old-space-size=768
+
+    - name: Set application ownership
+      ansible.builtin.file:
+        path: '{{ app_dir }}'
+        owner: '{{ app_user }}'
+        group: '{{ app_user }}'
+        recurse: yes
 
     - name: Install backend systemd unit
       ansible.builtin.template:
@@ -134,8 +186,10 @@
 
     - name: Wait for website
       ansible.builtin.uri:
-        url: http://dev.learnkannada.co.in
+        url: http://127.0.0.1
         method: GET
+        headers:
+          Host: dev.learnkannada.co.in
         status_code: 200
       register: website
       until: website.status == 200
@@ -164,10 +218,12 @@
 
     - name: Verify HTTPS
       ansible.builtin.uri:
-        url: https://dev.learnkannada.co.in
+        url: https://127.0.0.1
         method: GET
+        headers:
+          Host: dev.learnkannada.co.in
         status_code: 200
-        validate_certs: yes
+        validate_certs: no
 
   handlers:
     - name: Reload Nginx

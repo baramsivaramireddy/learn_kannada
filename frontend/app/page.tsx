@@ -9,7 +9,7 @@ type CheckResult = {
   message: string;
 };
 
-const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+const apiUrl =  "https://dev.learnkannada.co.in/api/";
 
 export default function Home() {
   const [backend, setBackend] = useState<CheckResult>({ state: "idle", message: "Not checked" });
