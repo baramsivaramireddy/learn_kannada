@@ -193,7 +193,7 @@ resource "aws_route53_zone" "private" {
 }
 
 resource "aws_route53_record" "database" {
-  zone_id = data.aws_route53_zone.main.zone_id
+  zone_id = aws_route53_zone.private.zone_id
 
   name = "db.learnkannada.co.in"
   type = "CNAME"

@@ -22,6 +22,22 @@ Nginx on EC2
 - Express runs as the `learn-kannada-backend` systemd service.
 - Prisma is used by Express for the PostgreSQL connectivity check.
 
+### Request Flow
+
+```mermaid
+flowchart LR
+	Browser[Browser] --> DNS[Route53 public DNS]
+	DNS --> Nginx[Nginx on EC2]
+	Nginx -->|/| Static[frontend/out static files]
+	Nginx -->|/api/| Express[Express systemd service :4000]
+	Express --> Prisma[Prisma Client]
+	Prisma -->|TCP 5432| RDS[(Private RDS PostgreSQL)]
+	PrivateDNS[Private Route53 zone] -->|db.learnkannada.co.in| RDS
+	Express -. uses private DNS .-> PrivateDNS
+```
+
+The browser can reach the public EC2 address, but it cannot reach the private RDS instance directly. Only the EC2 security group is allowed to connect to PostgreSQL on port `5432`.
+
 ## Repository Layout
 
 ```text
@@ -30,6 +46,43 @@ frontend/                Static-exported Next.js application
 infra/                   Terraform AWS infrastructure
 infra/ansible/           Server deployment playbook and templates
 ```
+
+## Git Repository
+
+The source repository is:
+
+```text
+https://github.com/baramsivaramireddy/learn_kannada.git
+```
+
+The `main` branch is the deployment source. Ansible clones or updates it on the EC2 host at:
+
+```text
+/opt/learn-kannada
+```
+
+### Git Deployment Flow
+
+```mermaid
+flowchart TD
+	Developer[Developer] -->|git add / commit / push| GitHub[GitHub main branch]
+	GitHub -->|git clone or git fetch| Ansible[Ansible from local machine]
+	Ansible -->|deploy over SSH| EC2[EC2 /opt/learn-kannada]
+	EC2 --> BackendBuild[backend npm ci + Prisma generate]
+	EC2 --> FrontendBuild[frontend npm ci + npm run build]
+	BackendBuild --> Service[learn-kannada-backend.service]
+	FrontendBuild --> StaticFiles[frontend/out]
+	StaticFiles --> Nginx[Nginx]
+```
+
+Ansible also repairs an incomplete checkout. If `/opt/learn-kannada/.git` is missing, it recreates the directory and clones the repository. If the checkout exists but has a broken `origin`, it restores the remote and resets the working tree to `origin/main`.
+
+Do not commit these files:
+
+- `backend/.env`, because it contains database credentials.
+- `infra/terraform.tfvars`, because it contains Terraform input secrets.
+- Terraform state files, because they can contain sensitive infrastructure data.
+- `node_modules`, `.next`, `frontend/out`, and Python virtual environments.
 
 ## Backend API
 
@@ -124,6 +177,50 @@ terraform output app_public_ip
 terraform output database_hostname
 ```
 
+### AWS Resources
+
+Terraform in `infra/main.tf` manages these resources:
+
+| Resource | Purpose |
+| --- | --- |
+| `aws_instance.app_server` | Ubuntu EC2 host for Nginx and Express |
+| `aws_eip.app` | Stable public IP for the EC2 host |
+| `aws_security_group.app` | Allows HTTP, HTTPS, and SSH to EC2 |
+| `aws_db_instance.postgres` | Private PostgreSQL RDS database |
+| `aws_security_group.database` | Allows PostgreSQL only from the app security group |
+| `aws_db_subnet_group.postgres` | Places RDS in the default VPC subnets |
+| `aws_route53_record.root` | Public DNS for `dev.learnkannada.co.in` |
+| `aws_route53_record.database` | Private DNS for `db.learnkannada.co.in` |
+
+The application and database are in the default VPC. The RDS instance has `publicly_accessible = false`, so its endpoint is reachable only from resources with network access inside the VPC.
+
+### Terraform Tooling
+
+- **Terraform**: declares and provisions AWS infrastructure.
+- **AWS provider**: connects Terraform to AWS in `ap-south-2`.
+- **Terraform state**: records the real AWS resource IDs and is ignored by Git.
+- **Terraform variables**: provide the database username and password through `terraform.tfvars` or another protected input method.
+
+Never put real passwords directly in committed `.tf` files.
+
+The RDS instance is private. The database DNS record is therefore created in the VPC-associated private Route53 zone, not only in the public zone. After changing the DNS configuration, apply Terraform before testing from EC2:
+
+```bash
+cd infra
+terraform plan
+terraform apply
+```
+
+Verify database DNS and connectivity from the EC2 instance:
+
+```bash
+getent hosts db.learnkannada.co.in
+nc -vz -w 5 db.learnkannada.co.in 5432
+curl http://127.0.0.1:4000/db-health
+```
+
+If `getent hosts` returns nothing, the private Route53 record is not available to the VPC yet. Check that Terraform applied the private-zone record and that the EC2 instance and RDS instance are in the same VPC.
+
 ## Server Deployment
 
 The Ansible inventory targets `dev.learnkannada.co.in` using the Ubuntu user and SSH key configured in `infra/ansible/inventory.ini`.
@@ -178,6 +275,34 @@ ansible-playbook -i inventory.ini system.yml
 ```
 
 If `npm ci` fails with return code `-9` and no useful npm error, the Linux kernel likely stopped the process because the `t3.micro` ran out of memory. The playbook creates `/swapfile` before installing dependencies and limits the frontend build memory usage.
+
+### Deployment Tools
+
+| Tool | Role |
+| --- | --- |
+| Git | Retrieves the application source from GitHub |
+| Ansible | Automates server configuration and deployment over SSH |
+| Node.js 22 | Runs Express and builds Next.js |
+| npm | Installs JavaScript dependencies and runs build scripts |
+| Prisma | Opens and tests the PostgreSQL connection from Express |
+| systemd | Keeps the Express backend running and restarts it after failure |
+| Nginx | Serves static files and proxies `/api/` to Express |
+| Certbot | Obtains and renews the HTTPS certificate |
+| Route53 | Provides public and private DNS records |
+
+### Runtime Process Layout
+
+```mermaid
+flowchart TB
+	Systemd[systemd] --> BackendUnit[learn-kannada-backend.service]
+	BackendUnit --> Express[Node.js Express :4000]
+	Nginx[Nginx :80/:443] --> Static[frontend/out]
+	Nginx -->|/api/*| Express
+	Express --> Prisma[Prisma Client]
+	Prisma --> RDS[(RDS PostgreSQL :5432)]
+```
+
+The static frontend does not run as a service. `npm run build` creates `frontend/out`, and Nginx serves those files. Only the backend needs a long-running daemon because it executes API requests and database queries.
 
 Useful server checks:
 
