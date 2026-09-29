@@ -47,7 +47,7 @@ type QuizResult = {
   itemResults: { quizItemId: string; correct: boolean; correctOptionIds: string[] }[];
 };
 
-const apiUrl = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000/api").replace(/\/$/, "");
+const apiUrl = (process.env.NEXT_PUBLIC_API_URL || "https://dev.learnkannada.co.in/api").replace(/\/$/, "");
 
 function Media({ content, className = "" }: { content: Content; className?: string }) {
   if (content.type === "TEXT") return <span className={className}>{content.text}</span>;

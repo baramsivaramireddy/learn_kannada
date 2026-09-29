@@ -16,7 +16,7 @@ type Section = { id: string; title: string; description: string; sequence: numbe
 type Catalog = { sections: Section[]; assets: Asset[] };
 type OptionDraft = { id: string; type: ContentType; text: string; assetId: string; isCorrect: boolean };
 
-const apiUrl = (process.env.NEXT_PUBLIC_API_URL || "/api").replace(/\/$/, "");
+const apiUrl = (process.env.NEXT_PUBLIC_API_URL || "https://dev.learnkannada.co.in/api").replace(/\/$/, "");
 
 async function apiRequest<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${apiUrl}${path}`, {
