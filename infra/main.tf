@@ -2,6 +2,8 @@ provider "aws" {
   region = "ap-south-2"
 }
 
+data "aws_region" "current" {}
+
 
 
 variable "db_username" {
@@ -45,15 +47,164 @@ data "aws_subnets" "default" {
   }
 }
 
-resource "aws_key_pair" "deployer"{
-  key_name = "app_ec2_key"
+resource "aws_key_pair" "deployer" {
+  key_name   = "app_ec2_key"
   public_key = file("~/.ssh/id_ed25519.pub")
+}
+
+resource "aws_s3_bucket" "content_assets" {
+  bucket        = "learn-kannada-assets"
+  force_destroy = false
+
+  tags = {
+    Name = "learn-kannada-assets"
+  }
+}
+
+resource "aws_s3_bucket_ownership_controls" "content_assets" {
+  bucket = aws_s3_bucket.content_assets.id
+
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "content_assets" {
+  bucket                  = aws_s3_bucket.content_assets.id
+  block_public_acls       = true
+  ignore_public_acls      = true
+  block_public_policy     = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "content_assets" {
+  bucket = aws_s3_bucket.content_assets.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_cors_configuration" "content_assets" {
+  bucket = aws_s3_bucket.content_assets.id
+
+  cors_rule {
+    allowed_methods = ["GET", "HEAD", "PUT"]
+    allowed_origins = [
+      "https://dev.learnkannada.co.in",
+      "http://localhost:3000",
+      "http://127.0.0.1:3000",
+    ]
+    allowed_headers = ["*"]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3000
+  }
+}
+
+resource "aws_s3_bucket_policy" "content_assets" {
+  bucket = aws_s3_bucket.content_assets.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "CloudFrontReadContentAssets"
+      Effect    = "Allow"
+      Principal = { Service = "cloudfront.amazonaws.com" }
+      Action    = "s3:GetObject"
+      Resource  = "${aws_s3_bucket.content_assets.arn}/assets/*"
+      Condition = {
+        StringEquals = {
+          "AWS:SourceArn" = aws_cloudfront_distribution.content_assets.arn
+        }
+      }
+    }]
+  })
+
+  depends_on = [aws_s3_bucket_public_access_block.content_assets]
+}
+
+resource "aws_cloudfront_origin_access_control" "content_assets" {
+  name                              = "learn-kannada-assets-oac"
+  description                       = "Private S3 access for Learn Kannada content assets"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+resource "aws_cloudfront_distribution" "content_assets" {
+  enabled         = true
+  is_ipv6_enabled = true
+  comment         = "Learn Kannada content assets"
+  price_class     = "PriceClass_100"
+
+  origin {
+    domain_name              = aws_s3_bucket.content_assets.bucket_regional_domain_name
+    origin_id                = "learn-kannada-content-assets"
+    origin_access_control_id = aws_cloudfront_origin_access_control.content_assets.id
+  }
+
+  default_cache_behavior {
+    target_origin_id       = "learn-kannada-content-assets"
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
+    cached_methods         = ["GET", "HEAD", "OPTIONS"]
+    compress               = true
+    cache_policy_id        = "658327ea-f89d-4fab-a63d-7e88639e58f6"
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+
+  depends_on = [aws_s3_bucket_ownership_controls.content_assets]
+}
+
+resource "aws_iam_role" "app_s3_assets" {
+  name = "learn-kannada-app-s3-assets"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "app_s3_assets" {
+  name = "learn-kannada-content-assets"
+  role = aws_iam_role.app_s3_assets.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["s3:PutObject", "s3:GetObject"]
+      Resource = "${aws_s3_bucket.content_assets.arn}/assets/*"
+    }]
+  })
+}
+
+resource "aws_iam_instance_profile" "app_s3_assets" {
+  name = "learn-kannada-app-s3-assets"
+  role = aws_iam_role.app_s3_assets.name
 }
 
 resource "aws_security_group" "app" {
   name        = "app-security-group"
   description = "Security group for application server"
-  
+
 
 
   ingress {
@@ -73,7 +224,7 @@ resource "aws_security_group" "app" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
- 
+
   ingress {
     description = "Allow SSH from my IP"
     from_port   = 22
@@ -95,6 +246,68 @@ resource "aws_security_group" "app" {
     Name = "app-security-group"
   }
 }
+
+resource "aws_security_group" "observability_sg" {
+  name        = "observability-security-group"
+  description = "Security group for observability server"
+
+
+
+  ingress {
+    description = "Allow HTTP"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+
+  ingress {
+    description = "Allow HTTPS"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "Allow HTTP"
+    from_port   = 3000
+    to_port     = 3000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  ingress {
+    description = "Allow HTTP"
+    from_port   = 9090
+    to_port     = 9090
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+
+  ingress {
+    description = "Allow SSH from my IP"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    #cidr_blocks = ["personal ip/32"]
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "observability-security-group"
+  }
+}
+
 
 resource "aws_security_group" "database" {
   name        = "database-security-group"
@@ -163,8 +376,9 @@ resource "aws_db_instance" "postgres" {
 }
 
 resource "aws_instance" "app_server" {
-  ami           = data.aws_ami.ubuntu.id
-  instance_type = "t3.micro"
+  ami                  = data.aws_ami.ubuntu.id
+  instance_type        = "t3.micro"
+  iam_instance_profile = aws_iam_instance_profile.app_s3_assets.name
 
   vpc_security_group_ids = [
     aws_security_group.app.id
@@ -178,8 +392,8 @@ resource "aws_instance" "app_server" {
 }
 
 resource "aws_eip" "app" {
-  domain = "vpc"
-  instance =  aws_instance.app_server.id
+  domain   = "vpc"
+  instance = aws_instance.app_server.id
 }
 
 resource "aws_route53_zone" "private" {
@@ -205,8 +419,26 @@ resource "aws_route53_record" "database" {
 resource "aws_route53_record" "root" {
   zone_id = data.aws_route53_zone.main.zone_id
 
-  name = "dev.learnkannada.co.in"
-  type = "A"
-  ttl = 300
+  name    = "dev.learnkannada.co.in"
+  type    = "A"
+  ttl     = 300
   records = [aws_eip.app.public_ip]
 }
+
+resource "aws_instance" "observability_server" {
+
+  ami = data.aws_ami.ubuntu.id
+
+  instance_type = "t3.micro"
+
+  vpc_security_group_ids = [
+    aws_security_group.observability_sg.id
+  ]
+  key_name = aws_key_pair.deployer.key_name
+
+  tags = {
+    Name = "observability_server"
+  }
+
+}
+

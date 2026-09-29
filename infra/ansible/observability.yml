@@ -1,0 +1,167 @@
+
+
+- name : "Deploy observability stack"
+  hosts: observability
+  become: true
+  vars:
+    app_user: "observability"
+    app_dir: "/opt/observability"
+    prometheus_version: "3.5.0"
+    prometheus_arch: "linux-amd64"
+    node_exporter_version: "1.9.1"
+
+  tasks:
+    - name: Install required packages
+      apt:
+        name:
+          - wget
+          - gpg
+          - apt-transport-https
+        state: present
+        update_cache: true
+
+    # -------------------------
+    # Grafana
+    # -------------------------
+
+    - name: Add Grafana GPG key
+      get_url:
+        url: https://apt.grafana.com/gpg.key
+        dest: /etc/apt/keyrings/grafana.asc
+        mode: "0644"
+
+    - name: Add Grafana repository
+      apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main"
+        filename: grafana
+        state: present
+
+    - name: Install Grafana
+      apt:
+        name: grafana
+        state: present
+        update_cache: true
+
+    - name: Enable and start Grafana
+      systemd:
+        name: grafana-server
+        enabled: true
+        state: started
+
+    # -------------------------
+    # Prometheus
+    # -------------------------
+
+    - name: Create Prometheus user
+      user:
+        name: prometheus
+        system: true
+        shell: /usr/sbin/nologin
+        create_home: false
+
+    - name: Create Prometheus directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: prometheus
+        group: prometheus
+        mode: "0755"
+      loop:
+        - /etc/prometheus
+        - /var/lib/prometheus
+    
+    - name: Download Prometheus
+      get_url:
+        url: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.{{ prometheus_arch }}.tar.gz"
+        dest: "/tmp/prometheus.tar.gz"
+        mode: "0644"
+    - name: Extract Prometheus
+      unarchive:
+        src: /tmp/prometheus.tar.gz
+        dest: /tmp
+        remote_src: true
+
+    - name: Install Prometheus binary
+      copy:
+        src: "/tmp/prometheus-{{ prometheus_version }}.{{ prometheus_arch }}/prometheus"
+        dest: /usr/local/bin/prometheus
+        owner: root
+        group: root
+        mode: "0755"
+        remote_src: true
+
+    - name: Install promtool binary
+      copy:
+        src: "/tmp/prometheus-{{ prometheus_version }}.{{ prometheus_arch }}/promtool"
+        dest: /usr/local/bin/promtool
+        owner: root
+        group: root
+        mode: "0755"
+        remote_src: true
+
+    - name: Install Prometheus configuration
+      ansible.builtin.template:
+        src: prometheus.yml
+        dest: /etc/prometheus/prometheus.yml
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+    - name: Install Prometheus systemd unit
+      ansible.builtin.template:
+        src: prometheus.service
+        dest: /etc/systemd/system/prometheus.service
+        mode: '0644'
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+    - name: Enable and start Prometheus
+      ansible.builtin.systemd:
+        name: prometheus
+        enabled: true
+        state: started
+
+    - name: Create node exporter user
+      ansible.builtin.user:
+        name: node_exporter
+        system: true
+        shell: /usr/sbin/nologin
+        create_home: false
+
+    - name: Download node exporter
+      ansible.builtin.get_url:
+        url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+        dest: "/tmp/node_exporter.tar.gz"
+        mode: "0644"
+
+    - name: Extract node exporter
+      ansible.builtin.unarchive:
+        src: /tmp/node_exporter.tar.gz
+        dest: /tmp
+        remote_src: true
+
+    - name: Install node exporter binary
+      ansible.builtin.copy:
+        src: "/tmp/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter"
+        dest: /usr/local/bin/node_exporter
+        owner: root
+        group: root
+        mode: "0755"
+        remote_src: true
+
+  
+
+    - name: Install node exporter systemd unit
+      ansible.builtin.template:
+        src: node-exporter.service
+        dest: /etc/systemd/system/node_exporter.service
+        mode: '0644'
+
+    - name: Enable and start node exporter
+      ansible.builtin.systemd:
+        name: node_exporter
+        enabled: true
+        state: started
+    - name: Restart Prometheus
+      ansible.builtin.systemd:
+        name: prometheus
+        state: restarted

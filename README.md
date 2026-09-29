@@ -89,23 +89,68 @@ Do not commit these files:
 The backend listens on port `4000`.
 
 ```text
-GET /health       API process health check
-GET /db-health    Prisma PostgreSQL connectivity check
+GET  /health
+GET  /db-health
+GET  /catalog/sections
+GET  /catalog/sections/:sectionId
+GET  /catalog/subsections/:subsectionId
+GET  /catalog/quizzes/:quizId
+POST /quizzes/:quizId/submit
 ```
 
 Through Nginx, the same routes are available at:
 
 ```text
-GET https://dev.learnkannada.co.in/api/health
-GET https://dev.learnkannada.co.in/api/db-health
+GET  https://dev.learnkannada.co.in/api/catalog/sections
+POST https://dev.learnkannada.co.in/api/quizzes/:quizId/submit
 ```
 
+Catalog routes return PUBLIC content only. Quiz submissions accept
+`{ "answers": [{ "quizItemId": "...", "selectedOptionIds": ["..."] }] }`.
+SCQ and SOUND answers must select one option; MCQ answers must match the full
+correct set. Omitted answers count as incorrect. The API returns the percentage,
+pass/fail result, and per-question review without storing learner progress.
+
+Content authoring routes require `Authorization: Bearer $CONTENT_ADMIN_TOKEN`:
+
+```text
+POST  /admin/assets/upload-url
+POST  /admin/sections                 PATCH /admin/sections/:id
+POST  /admin/subsections              PATCH /admin/subsections/:id
+POST  /admin/learning-items           PATCH /admin/learning-items/:id
+POST  /admin/quizzes                  PATCH /admin/quizzes/:id
+POST  /admin/quiz-items               PATCH /admin/quiz-items/:id
+PATCH /admin/:resource/:id/visibility
+```
+
+The upload-url endpoint registers a DRAFT asset and returns a 15-minute S3
+pre-signed PUT URL. Upload the file to that URL using its returned headers, then
+publish the asset through the visibility endpoint. Configure `S3_BUCKET`,
+`AWS_REGION`, and `ASSET_BASE_URL`; the latter must be the CloudFront HTTPS
+hostname so only CDN URLs are stored in `Asset.url`. After applying Terraform,
+get it with `cd infra && terraform output -raw asset_base_url`, then set that
+value in `backend/.env`. Upload registration stays disabled until this CDN URL is
+configured. AWS credentials use the default AWS credential chain (prefer the
+EC2 instance role in deployment). The S3 bucket remains private behind
+CloudFront; browser uploads use bucket CORS allowing PUT from the authoring
+origin.
+
+The Prisma v1 schema and initial migration live under `backend/prisma`. Apply the
+migration before starting the API:
+
+```bash
+cd backend
+npx prisma migrate deploy
+npm run prisma:generate
+npm test
+```
 
 ## Local Development
 
 ### Backend
 
-Create `backend/.env` with the database settings. This file is ignored by Git.
+Create `backend/.env` from `.env.example` and set the database settings and a
+private `CONTENT_ADMIN_TOKEN`. This file is ignored by Git.
 
 ```env
 PORT=4000
@@ -121,6 +166,7 @@ Install and run the API:
 ```bash
 cd backend
 npm ci
+npx prisma migrate deploy
 npm run prisma:generate
 npm run dev
 ```
@@ -142,7 +188,9 @@ npm ci
 npm run dev
 ```
 
-The frontend calls `/api/health` and `/api/db-health` in production through Nginx. For local development, run the backend on port `4000` and set `NEXT_PUBLIC_API_URL=http://localhost:4000` before starting Next.js.
+The frontend uses `/api` in production through Nginx. For local development, run
+the backend on port `4000` and set `NEXT_PUBLIC_API_URL=http://localhost:4000`
+before starting Next.js.
 
 Build the static site:
 
