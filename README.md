@@ -66,7 +66,7 @@ The `main` branch is the deployment source. Ansible clones or updates it on the 
 ```mermaid
 flowchart TD
 	Developer[Developer] -->|git add / commit / push| GitHub[GitHub main branch]
-	GitHub -->|git clone or git fetch| Ansible[Ansible from local machine]
+	GitHub -->|git clone or git pull --ff-only| Ansible[Ansible from local machine]
 	Ansible -->|deploy over SSH| EC2[EC2 /opt/learn-kannada]
 	EC2 --> BackendBuild[backend npm ci + Prisma generate]
 	EC2 --> FrontendBuild[frontend npm ci + npm run build]
@@ -75,7 +75,7 @@ flowchart TD
 	StaticFiles --> Nginx[Nginx]
 ```
 
-Ansible also repairs an incomplete checkout. If `/opt/learn-kannada/.git` is missing, it recreates the directory and clones the repository. If the checkout exists but has a broken `origin`, it restores the remote and resets the working tree to `origin/main`.
+Ansible also repairs an incomplete checkout. If `/opt/learn-kannada/.git` is missing, it recreates the directory and clones the repository. If the checkout exists but has a broken `origin`, it restores the remote. Existing checkouts are updated with `git pull --ff-only origin main`; local changes or diverged history cause deployment to stop instead of being discarded or merged.
 
 Do not commit these files:
 

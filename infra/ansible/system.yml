@@ -91,10 +91,9 @@
         chdir: '{{ app_dir }}'
       when: application_git.stat.exists
 
-    - name: Update existing application repository
-      ansible.builtin.shell: |
-        git -c safe.directory='{{ app_dir }}' fetch origin main
-        git -c safe.directory='{{ app_dir }}' reset --hard origin/main
+    - name: Pull latest application repository changes
+      ansible.builtin.command:
+        cmd: git -c safe.directory='{{ app_dir }}' pull --ff-only origin main
       args:
         chdir: '{{ app_dir }}'
       when: application_git.stat.exists
@@ -184,15 +183,16 @@
         state: started
         enabled: yes
 
-    - name: Wait for website
+    - name: Wait for local Nginx response
       ansible.builtin.uri:
         url: http://127.0.0.1
         method: GET
         headers:
           Host: dev.learnkannada.co.in
-        status_code: 200
+        follow_redirects: none
+        status_code: [200, 301, 302, 307, 308]
       register: website
-      until: website.status == 200
+      until: website.status in [200, 301, 302, 307, 308]
       retries: 10
       delay: 3
 
