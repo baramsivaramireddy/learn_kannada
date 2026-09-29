@@ -18,9 +18,11 @@ output "database_hostname" {
   value = aws_route53_record.database.fqdn
 }
 
+/*
 output "observability_server_id" {
   value = aws_instance.observability_server.public_ip
 }
+*/
 
 output "asset_bucket_name" {
   value = aws_s3_bucket.content_assets.bucket
