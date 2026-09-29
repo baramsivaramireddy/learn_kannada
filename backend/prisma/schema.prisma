@@ -6,3 +6,159 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+enum Visibility {
+  DRAFT
+  PUBLIC
+}
+
+enum AssetType {
+  IMAGE
+  AUDIO
+  VIDEO
+}
+
+enum LearningItemType {
+  WORD
+  SOUND
+}
+
+enum QuizItemType {
+  SCQ
+  MCQ
+  SOUND
+}
+
+enum ContentType {
+  TEXT
+  IMAGE
+  AUDIO
+}
+
+model Asset {
+  id          String     @id @default(cuid())
+  title       String
+  description String?
+  type        AssetType
+  url         String
+  location    String
+  metadata    Json?
+  visibility  Visibility @default(DRAFT)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  sections        Section[]      @relation("SectionImage")
+  subsections     Subsection[]   @relation("SubsectionImage")
+  learningImages  LearningItem[] @relation("LearningImage")
+  learningAudios  LearningItem[] @relation("LearningAudio")
+  quizQuestions   QuizItem[]     @relation("QuestionAsset")
+  quizOptions     QuizOption[]   @relation("OptionAsset")
+}
+
+model Section {
+  id           String     @id @default(cuid())
+  title        String
+  description  String     @default("")
+  sequence     Float
+  imageAssetId String?
+  visibility   Visibility @default(DRAFT)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  image       Asset?       @relation("SectionImage", fields: [imageAssetId], references: [id], onDelete: SetNull)
+  subsections Subsection[]
+
+  @@unique([sequence])
+  @@index([visibility, sequence])
+}
+
+model Subsection {
+  id           String     @id @default(cuid())
+  sectionId    String
+  title        String
+  description  String     @default("")
+  sequence     Float
+  imageAssetId String?
+  visibility   Visibility @default(DRAFT)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  section       Section        @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  image         Asset?         @relation("SubsectionImage", fields: [imageAssetId], references: [id], onDelete: SetNull)
+  learningItems LearningItem[]
+  quiz          Quiz?
+
+  @@unique([sectionId, sequence])
+  @@index([visibility, sequence])
+}
+
+model LearningItem {
+  id           String           @id @default(cuid())
+  subsectionId String
+  type         LearningItemType
+  sequence     Float
+  word         String?
+  meaning      String?
+  sound        String?
+  description  String?
+  imageAssetId String?
+  audioAssetId String?
+  visibility   Visibility       @default(DRAFT)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  subsection Subsection @relation(fields: [subsectionId], references: [id], onDelete: Cascade)
+  image      Asset?     @relation("LearningImage", fields: [imageAssetId], references: [id], onDelete: SetNull)
+  audio      Asset?     @relation("LearningAudio", fields: [audioAssetId], references: [id], onDelete: SetNull)
+
+  @@unique([subsectionId, sequence])
+  @@index([subsectionId, visibility, sequence])
+}
+
+model Quiz {
+  id                String     @id @default(cuid())
+  subsectionId      String     @unique
+  passingPercentage Float      @default(70)
+  visibility        Visibility @default(DRAFT)
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  subsection Subsection @relation(fields: [subsectionId], references: [id], onDelete: Cascade)
+  items      QuizItem[]
+}
+
+model QuizItem {
+  id              String       @id @default(cuid())
+  quizId          String
+  type            QuizItemType
+  sequence        Float
+  questionType    ContentType
+  questionText    String?
+  questionAssetId String?
+  visibility      Visibility   @default(DRAFT)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  quiz          Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  questionAsset Asset?       @relation("QuestionAsset", fields: [questionAssetId], references: [id], onDelete: SetNull)
+  options       QuizOption[]
+
+  @@unique([quizId, sequence])
+  @@index([quizId, visibility, sequence])
+}
+
+model QuizOption {
+  id         String      @id @default(cuid())
+  quizItemId String
+  sequence   Float
+  type       ContentType
+  text       String?
+  assetId    String?
+  isCorrect  Boolean     @default(false)
+
+  quizItem QuizItem @relation(fields: [quizItemId], references: [id], onDelete: Cascade)
+  asset    Asset?   @relation("OptionAsset", fields: [assetId], references: [id], onDelete: SetNull)
+
+  @@unique([quizItemId, sequence])
+  @@index([quizItemId, sequence])
+}
