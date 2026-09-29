@@ -247,6 +247,7 @@ resource "aws_security_group" "app" {
   }
 }
 
+/*
 resource "aws_security_group" "observability_sg" {
   name        = "observability-security-group"
   description = "Security group for observability server"
@@ -307,6 +308,7 @@ resource "aws_security_group" "observability_sg" {
     Name = "observability-security-group"
   }
 }
+*/
 
 
 resource "aws_security_group" "database" {
@@ -425,6 +427,7 @@ resource "aws_route53_record" "root" {
   records = [aws_eip.app.public_ip]
 }
 
+/*
 resource "aws_instance" "observability_server" {
 
   ami = data.aws_ami.ubuntu.id
@@ -441,4 +444,5 @@ resource "aws_instance" "observability_server" {
   }
 
 }
+*/
 
