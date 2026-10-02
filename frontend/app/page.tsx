@@ -25,14 +25,13 @@ type QuizItem = {
   question: Content;
   options: QuizOption[];
 };
-type Quiz = { id: string; passingPercentage: number; items: QuizItem[] };
 type Subsection = {
   id: string;
   title: string;
   description: string;
   image?: Asset | null;
   learningItems: LearningItem[];
-  quiz: Quiz | null;
+  quizItems: QuizItem[];
 };
 type Section = {
   id: string;
@@ -42,11 +41,10 @@ type Section = {
   subsections: Subsection[];
 };
 type QuizResult = {
+  subsectionId: string;
   totalItems: number;
   correctItems: number;
   percentage: number;
-  passingPercentage: number;
-  passed: boolean;
   itemResults: { quizItemId: string; correct: boolean; correctOptionIds: string[] }[];
 };
 const apiUrl = (process.env.NEXT_PUBLIC_API_URL || "https://dev.learnkannada.co.in/api").replace(/\/$/, "");
@@ -115,8 +113,8 @@ export default function Home() {
     ? sections.slice(activeSectionIndex + 1).find((section) => section.subsections.length > 0)
     : undefined;
   const nextLesson = nextSubsection || nextSection?.subsections[0];
-  const quiz = activeSubsection?.quiz;
-  const answeredCount = quiz?.items.filter((item) => (answers[item.id]?.length || 0) > 0).length || 0;
+  const quizItems = activeSubsection?.quizItems || [];
+  const answeredCount = quizItems.filter((item) => (answers[item.id]?.length || 0) > 0).length;
 
   const chooseSection = (section: Section) => {
     setActiveSectionId(section.id);
@@ -155,11 +153,11 @@ export default function Home() {
   };
 
   const checkScore = async () => {
-    if (!quiz) return;
+    if (!activeSubsection) return;
     setSubmitting(true);
     setSubmitError("");
     try {
-      const response = await fetch(`${apiUrl}/quizzes/${quiz.id}/submit`, {
+      const response = await fetch(`${apiUrl}/subsections/${activeSubsection.id}/quiz/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -169,7 +167,7 @@ export default function Home() {
       const body = await response.json();
       if (!response.ok) throw new Error(body.message || "Your answers could not be checked.");
       setResult(body.result as QuizResult);
-      requestAnimationFrame(() => swiperRef.current?.slideTo((activeSubsection?.learningItems.length || 0) + quiz.items.length + 1));
+      requestAnimationFrame(() => swiperRef.current?.slideTo(activeSubsection.learningItems.length + quizItems.length + 1));
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "Your answers could not be checked.");
     } finally {
@@ -205,8 +203,8 @@ export default function Home() {
                 <div><span className="text-[9px] font-semibold tracking-[.1em] text-neutral-500">{activeSection.title.toUpperCase()} <span className="px-1 text-neutral-300">/</span> LESSON {String(activeSection.subsections.indexOf(activeSubsection) + 1).padStart(2, "0")}</span><h2 className="my-2 text-[28px] font-medium leading-tight text-neutral-900">{activeSubsection.title}</h2><p className="m-0 text-xs leading-relaxed text-neutral-500">{activeSubsection.description}</p></div>
               </div>
 
-              <div className="flex items-center gap-3 py-4 text-[11px] text-neutral-500"><span>{activeSubsection.learningItems.length} learning {activeSubsection.learningItems.length === 1 ? "card" : "cards"}</span><span className="h-px w-6 bg-neutral-300" /><span className="text-[9px] font-semibold tracking-[.1em] text-neutral-600">SCROLL TO LEARN</span></div>
-              {activeSubsection.learningItems.length > 0 || (quiz?.items.length || 0) > 0 ? (
+              <div className="flex items-center gap-3 py-4 text-[11px] text-neutral-500"><span>{activeSubsection.learningItems.length} learning {activeSubsection.learningItems.length === 1 ? "card" : "cards"}</span><span className="h-px w-6 bg-neutral-300" /><span className="text-[9px] font-semibold tracking-[.1em] text-neutral-600">SCROLL TO LEARN &amp; PRACTICE</span></div>
+              {activeSubsection.learningItems.length > 0 || quizItems.length > 0 ? (
                 <Swiper key={activeSubsection.id} modules={[A11y, Keyboard, Mousewheel]} direction="vertical" slidesPerView={1} spaceBetween={12} keyboard={{ enabled: true, onlyInViewport: true }} mousewheel={{ forceToAxis: true, releaseOnEdges: true, sensitivity: 0.8 }} className="mx-auto h-[min(70vh,650px)] min-h-[450px] w-full max-w-[760px] overflow-hidden max-[760px]:h-[68svh] max-[760px]:min-h-[440px] max-[420px]:min-h-[420px]" role="region" aria-label="Scrollable lesson cards" onSwiper={(swiper) => { swiperRef.current = swiper; }}>
                   {activeSubsection.learningItems.map((item, index) => (
                     <SwiperSlide key={item.id}>
@@ -226,11 +224,11 @@ export default function Home() {
                     </SwiperSlide>
                   ))}
 
-                  {quiz?.items.map((item, index) => (
+                  {quizItems.map((item, index) => (
                     <SwiperSlide key={item.id}>
                       <article className="grid h-full w-full grid-cols-2 items-center gap-8 overflow-y-auto border border-neutral-200 bg-neutral-50 p-8 max-[760px]:grid-cols-1 max-[760px]:gap-5 max-[760px]:p-5">
                         <div>
-                          <span className="text-[9px] font-semibold tracking-[.1em] text-neutral-500">QUIZ QUESTION {String(index + 1).padStart(2, "0")} / {String(quiz.items.length).padStart(2, "0")}</span>
+                          <span className="text-[9px] font-semibold tracking-[.1em] text-neutral-500">QUIZ QUESTION {String(index + 1).padStart(2, "0")} / {String(quizItems.length).padStart(2, "0")}</span>
                           <h3 className="my-3 text-xl font-medium text-neutral-900">{item.type === "MCQ" ? "Choose all that apply" : item.type === "SOUND" ? "Listen closely" : "Choose one answer"}</h3>
                           <div className="question-content"><Media content={item.question} /></div>
                         </div>
@@ -242,26 +240,26 @@ export default function Home() {
                             </button>;
                           })}
                         </div>
-                        <span className="col-span-2 text-[10px] text-neutral-500 max-[760px]:col-span-1">{answeredCount} of {quiz.items.length} answered</span>
+                        <span className="col-span-2 text-[10px] text-neutral-500 max-[760px]:col-span-1">{answeredCount} of {quizItems.length} answered</span>
                       </article>
                     </SwiperSlide>
                   ))}
 
-                  {quiz && quiz.items.length > 0 && <SwiperSlide key="quiz-submit"><article className="flex h-full w-full flex-col items-center justify-center gap-4 border border-neutral-200 bg-white px-8 py-10 text-center max-[760px]:px-5" aria-label="Submit quiz answers">
+                  {quizItems.length > 0 && <SwiperSlide key="quiz-submit"><article className="flex h-full w-full flex-col items-center justify-center gap-4 border border-neutral-200 bg-white px-8 py-10 text-center max-[760px]:px-5" aria-label="Submit quiz answers">
                     <span className="text-[9px] font-semibold tracking-[.1em] text-neutral-500">END OF QUIZ</span>
                     <h3 className="m-0 text-xl font-medium text-neutral-900">Ready to check your answers?</h3>
-                    <p className="m-0 text-xs text-neutral-500">{answeredCount} of {quiz.items.length} answered · pass at {quiz.passingPercentage}%</p>
+                    <p className="m-0 text-xs text-neutral-500">{answeredCount} of {quizItems.length} answered</p>
                     {submitError && <p className="m-0 text-xs text-red-700" role="alert">{submitError}</p>}
                     <button className="primary-button" disabled={submitting} onClick={checkScore}>{submitting ? "Checking..." : "Check score"}<span aria-hidden="true">↗</span></button>
                   </article></SwiperSlide>}
 
-                  {result && quiz && <SwiperSlide key="quiz-results"><article className="h-full w-full overflow-y-auto border border-neutral-200 bg-white p-8 max-[760px]:p-5">
-                    <span className="text-[9px] font-semibold tracking-[.1em] text-neutral-500">{result.passed ? "NICE WORK" : "KEEP PRACTICING"}</span>
-                    <h3 className="mb-2 mt-2 text-2xl font-medium text-neutral-900">{result.passed ? "You passed." : "Not quite yet."}</h3>
-                    <p className="m-0 text-sm text-neutral-600">You got <strong>{result.correctItems} of {result.totalItems}</strong> correct · score {result.percentage}% · pass mark {result.passingPercentage}%</p>
+                  {result && <SwiperSlide key="quiz-results"><article className="h-full w-full overflow-y-auto border border-neutral-200 bg-white p-8 max-[760px]:p-5">
+                    <span className="text-[9px] font-semibold tracking-[.1em] text-neutral-500">QUIZ COMPLETE</span>
+                    <h3 className="mb-2 mt-2 text-2xl font-medium text-neutral-900">Your score: {result.percentage}%</h3>
+                    <p className="m-0 text-sm text-neutral-600">You got <strong>{result.correctItems} of {result.totalItems}</strong> correct.</p>
                     <div className="mt-5">
                       <h4 className="mb-1 text-sm font-semibold text-neutral-800">Answer review</h4>
-                      {quiz.items.map((item, index) => {
+                      {quizItems.map((item, index) => {
                         const itemResult = result.itemResults.find((entry) => entry.quizItemId === item.id);
                         const selected = answers[item.id] || [];
                         const correctLabels = item.options.filter((option) => itemResult?.correctOptionIds.includes(option.id)).map((option) => option.text || option.asset?.title || "Media answer");

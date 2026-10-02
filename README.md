@@ -94,22 +94,23 @@ GET  /db-health
 GET  /catalog/sections
 GET  /catalog/sections/:sectionId
 GET  /catalog/subsections/:subsectionId
-GET  /catalog/quizzes/:quizId
-POST /quizzes/:quizId/submit
+POST /subsections/:subsectionId/quiz/submit
 ```
 
 Through Nginx, the same routes are available at:
 
 ```text
 GET  https://dev.learnkannada.co.in/api/catalog/sections
-POST https://dev.learnkannada.co.in/api/quizzes/:quizId/submit
+POST https://dev.learnkannada.co.in/api/subsections/:subsectionId/quiz/submit
 ```
 
 Catalog routes return PUBLIC content only. Quiz submissions accept
 `{ "answers": [{ "quizItemId": "...", "selectedOptionIds": ["..."] }] }`.
 SCQ and SOUND answers must select one option; MCQ answers must match the full
 correct set. Omitted answers count as incorrect. The API returns the percentage,
-pass/fail result, and per-question review without storing learner progress.
+correct-item count, and per-question review without storing learner progress.
+Quiz questions are ordered items belonging directly to a subsection; there is
+no separate Quiz record or pass-percentage threshold.
 
 Content authoring routes require `Authorization: Bearer $CONTENT_ADMIN_TOKEN`:
 
@@ -118,7 +119,6 @@ POST  /admin/assets/upload-url
 POST  /admin/sections                 PATCH /admin/sections/:id
 POST  /admin/subsections              PATCH /admin/subsections/:id
 POST  /admin/learning-items           PATCH /admin/learning-items/:id
-POST  /admin/quizzes                  PATCH /admin/quizzes/:id
 POST  /admin/quiz-items               PATCH /admin/quiz-items/:id
 PATCH /admin/:resource/:id/visibility
 ```

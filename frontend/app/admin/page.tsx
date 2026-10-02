@@ -10,8 +10,7 @@ type Asset = { id: string; title: string; type: AssetType; url: string; visibili
 type Option = { id: string; sequence: number; type: ContentType; text: string | null; assetId: string | null; isCorrect: boolean; asset: Asset | null };
 type QuizItem = { id: string; type: "SCQ" | "MCQ" | "SOUND"; sequence: number; questionType: ContentType; questionText: string | null; questionAsset: Asset | null; visibility: Visibility; options: Option[] };
 type LearningItem = { id: string; type: "WORD" | "SOUND"; sequence: number; word: string | null; meaning: string | null; sound: string | null; description: string | null; visibility: Visibility };
-type Quiz = { id: string; passingPercentage: number; visibility: Visibility; items: QuizItem[] };
-type Subsection = { id: string; title: string; description: string; sequence: number; visibility: Visibility; learningItems: LearningItem[]; quiz: Quiz | null };
+type Subsection = { id: string; title: string; description: string; sequence: number; visibility: Visibility; learningItems: LearningItem[]; quizItems: QuizItem[] };
 type Section = { id: string; title: string; description: string; sequence: number; visibility: Visibility; subsections: Subsection[] };
 type Catalog = { sections: Section[]; assets: Asset[] };
 type OptionDraft = { id: string; type: ContentType; text: string; assetId: string; isCorrect: boolean };
@@ -67,8 +66,6 @@ export default function AdminPage() {
   const [editSubsectionTitle, setEditSubsectionTitle] = useState("");
   const [editSubsectionDescription, setEditSubsectionDescription] = useState("");
   const [editSubsectionSequence, setEditSubsectionSequence] = useState("1");
-  const [passingPercentage, setPassingPercentage] = useState("70");
-
   const [learningType, setLearningType] = useState<"WORD" | "SOUND">("WORD");
   const [learningSequence, setLearningSequence] = useState("1");
   const [word, setWord] = useState("");
@@ -159,7 +156,6 @@ export default function AdminPage() {
           title: subsectionTitle,
           description: subsectionDescription,
           sequence: Number(subsectionSequence),
-          passingPercentage: Number(passingPercentage),
           visibility: "DRAFT",
         }),
       });
@@ -168,7 +164,7 @@ export default function AdminPage() {
       setSubsectionTitle("");
       setSubsectionDescription("");
       setSubsectionSequence(String(selectedSection.subsections.length + 2));
-    }, "Draft lesson and its quiz created.");
+    }, "Draft lesson created.");
   };
 
   const beginSectionEdit = (section: Section) => {
@@ -266,8 +262,7 @@ export default function AdminPage() {
 
   const createQuizItem = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const currentQuiz = selectedSubsection?.quiz;
-    if (!selectedSubsection || !currentQuiz) return;
+    if (!selectedSubsection) return;
     void runAction(async () => {
       const resolvedQuestionType = quizType === "SOUND" ? "AUDIO" : questionType;
       const question = resolvedQuestionType === "TEXT"
@@ -283,7 +278,7 @@ export default function AdminPage() {
       await apiRequest("/admin/quiz-items", token, {
         method: "POST",
         body: JSON.stringify({
-          quizId: currentQuiz.id,
+          subsectionId: selectedSubsection.id,
           type: quizType,
           sequence: Number(quizSequence),
           question,
@@ -293,7 +288,7 @@ export default function AdminPage() {
       await loadCatalog(token);
       setQuestionText("");
       setQuestionAssetId("");
-      setQuizSequence(String(currentQuiz.items.length + 2));
+      setQuizSequence(String(selectedSubsection.quizItems.length + 2));
       setOptions([emptyOption(0), emptyOption(1), emptyOption(2), emptyOption(3)]);
     }, "Draft quiz question created.");
   };
@@ -437,9 +432,8 @@ export default function AdminPage() {
                 <div className="flex justify-between gap-2.5 bg-neutral-100 px-2.5 py-2"><span className="text-[8px] font-bold tracking-[.1em] text-neutral-500">IN SECTION</span><strong className="text-[10px] text-[#183e35]">{selectedSection.title}</strong></div>
                 <label className={adminFieldClass}><span>LESSON TITLE</span><input value={subsectionTitle} onChange={(event) => setSubsectionTitle(event.target.value)} placeholder="e.g. At home" required /></label>
                 <label className={adminFieldClass}><span>DESCRIPTION</span><textarea value={subsectionDescription} onChange={(event) => setSubsectionDescription(event.target.value)} rows={2} placeholder="A short learning objective" /></label>
-                <div className="grid grid-cols-2 gap-[11px] max-[640px]:grid-cols-1"><label className={adminFieldClass}><span>ORDER</span><input type="number" step="0.1" value={subsectionSequence} onChange={(event) => setSubsectionSequence(event.target.value)} required /></label><label className={adminFieldClass}><span>PASS MARK %</span><input type="number" min="0" max="100" value={passingPercentage} onChange={(event) => setPassingPercentage(event.target.value)} required /></label></div>
-                <button className={adminPrimaryClass} type="submit" disabled={busy}>Create lesson + quiz <span aria-hidden="true">+</span></button>
-                <small className="text-[9px] leading-relaxed text-neutral-500">A draft quiz is created with every subsection.</small>
+                <label className={adminFieldClass}><span>ORDER</span><input type="number" step="0.1" value={subsectionSequence} onChange={(event) => setSubsectionSequence(event.target.value)} required /></label>
+                <button className={adminPrimaryClass} type="submit" disabled={busy}>Create subsection <span aria-hidden="true">+</span></button>
               </form> : <p className="my-3 text-[11px] leading-relaxed text-neutral-500">Create or select a section to add a lesson.</p>}
             </section>
 
@@ -452,13 +446,12 @@ export default function AdminPage() {
                   <label className={adminFieldClass}><span>ORDER</span><input type="number" step="0.1" value={editSubsectionSequence} onChange={(event) => setEditSubsectionSequence(event.target.value)} required /></label>
                   <button className={adminPrimaryClass} type="submit" disabled={busy}>{busy ? "Saving..." : "Save subsection"}<span aria-hidden="true">✓</span></button>
                 </form>}
-                <div className="flex flex-wrap gap-4 border-y border-neutral-200 py-2.5 text-[9px] text-neutral-500"><span>{selectedSection?.title}</span><span>{selectedSubsection.learningItems.length} learning items</span><span>{selectedSubsection.quiz?.items.length || 0} quiz questions</span></div>
+                <div className="flex flex-wrap gap-4 border-y border-neutral-200 py-2.5 text-[9px] text-neutral-500"><span>{selectedSection?.title}</span><span>{selectedSubsection.learningItems.length} learning items</span><span>{selectedSubsection.quizItems.length} quiz questions</span></div>
                 <div className="grid">
                   {selectedSubsection.learningItems.map((item) => <div className="grid min-h-[49px] grid-cols-[65px_minmax(80px,.8fr)_minmax(80px,1fr)_auto] items-center gap-[11px] border-b border-neutral-100 max-[640px]:grid-cols-[55px_minmax(45px,.7fr)_minmax(50px,1fr)_auto] max-[640px]:gap-1.5" key={item.id}><span className="w-max bg-neutral-100 px-1.5 py-1 text-[8px] font-bold tracking-wide text-[#183e35]">{item.type}</span><strong className="overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-neutral-900 max-[640px]:text-[9px]" lang="kn">{item.type === "WORD" ? item.word : item.sound}</strong><span className="overflow-hidden text-ellipsis whitespace-nowrap text-[10px] text-neutral-500 max-[640px]:text-[8px]">{item.type === "WORD" ? item.meaning : item.description}</span>{publishButton("learning-items", item.id, item.visibility)}</div>)}
-                  {selectedSubsection.quiz?.items.map((item) => <div className="grid min-h-[49px] grid-cols-[65px_minmax(80px,.8fr)_minmax(80px,1fr)_auto] items-center gap-[11px] border-b border-neutral-100 max-[640px]:grid-cols-[55px_minmax(45px,.7fr)_minmax(50px,1fr)_auto] max-[640px]:gap-1.5" key={item.id}><span className="w-max bg-red-50 px-1.5 py-1 text-[8px] font-bold tracking-wide text-red-800">{item.type}</span><strong className="overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-neutral-900 max-[640px]:text-[9px]">Question {item.sequence}</strong><span className="overflow-hidden text-ellipsis whitespace-nowrap text-[10px] text-neutral-500 max-[640px]:text-[8px]">{item.questionText || item.questionAsset?.title || item.options.length + " options"}</span>{publishButton("quiz-items", item.id, item.visibility)}</div>)}
-                  {!selectedSubsection.learningItems.length && !selectedSubsection.quiz?.items.length && <p className="my-3 text-[11px] leading-relaxed text-neutral-500">This lesson is empty. Add its learning material and quiz questions below.</p>}
+                  {selectedSubsection.quizItems.map((item) => <div className="grid min-h-[49px] grid-cols-[65px_minmax(80px,.8fr)_minmax(80px,1fr)_auto] items-center gap-[11px] border-b border-neutral-100 max-[640px]:grid-cols-[55px_minmax(45px,.7fr)_minmax(50px,1fr)_auto] max-[640px]:gap-1.5" key={item.id}><span className="w-max bg-red-50 px-1.5 py-1 text-[8px] font-bold tracking-wide text-red-800">{item.type}</span><strong className="overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-neutral-900 max-[640px]:text-[9px]">Question {item.sequence}</strong><span className="overflow-hidden text-ellipsis whitespace-nowrap text-[10px] text-neutral-500 max-[640px]:text-[8px]">{item.questionText || item.questionAsset?.title || item.options.length + " options"}</span>{publishButton("quiz-items", item.id, item.visibility)}</div>)}
+                  {!selectedSubsection.learningItems.length && !selectedSubsection.quizItems.length && <p className="my-3 text-[11px] leading-relaxed text-neutral-500">This subsection is empty. Add learning material or quiz questions below.</p>}
                 </div>
-                {selectedSubsection.quiz && <div className="flex items-center justify-between gap-3 pt-3"><span className="grid gap-1"><strong className="text-[11px]">Lesson quiz</strong><small className="text-[9px] text-neutral-500">Passing score {selectedSubsection.quiz.passingPercentage}% · {selectedSubsection.quiz.items.length} questions</small></span>{publishButton("quizzes", selectedSubsection.quiz.id, selectedSubsection.quiz.visibility)}</div>}
               </> : <p className="my-3 text-[11px] leading-relaxed text-neutral-500">Select a lesson in the left navigation to manage its content.</p>}
             </section>
 
@@ -475,7 +468,7 @@ export default function AdminPage() {
 
               <section className={adminPanelClass}>
                 <div className={panelHeadingClass}><div><span className="text-[9px] font-bold tracking-[.12em] text-neutral-500">05 / ASSESSMENT</span><h3 className="mb-0 mt-1.5 font-serif text-xl font-medium">Add a quiz question</h3></div><span className="font-mono text-[11px] text-neutral-400">05</span></div>
-                {selectedSubsection.quiz ? <form className={adminFormClass} onSubmit={createQuizItem}>
+                <form className={adminFormClass} onSubmit={createQuizItem}>
                   <div className="grid grid-cols-2 gap-[11px] max-[640px]:grid-cols-1"><label className={adminFieldClass}><span>QUESTION TYPE</span><select value={quizType} onChange={(event) => { const nextType = event.target.value as "SCQ" | "MCQ" | "SOUND"; setQuizType(nextType); if (nextType === "SOUND") setQuestionType("AUDIO"); }}><option value="SCQ">Single choice</option><option value="MCQ">Multiple choice</option><option value="SOUND">Sound question</option></select></label><label className={adminFieldClass}><span>ORDER</span><input type="number" step="0.1" value={quizSequence} onChange={(event) => setQuizSequence(event.target.value)} required /></label></div>
                   {quizType !== "SOUND" && <label className={adminFieldClass}><span>QUESTION CONTENT</span><select value={questionType} onChange={(event) => setQuestionType(event.target.value as ContentType)}><option value="TEXT">Text</option><option value="IMAGE">Image</option><option value="AUDIO">Audio</option></select></label>}
                   {(quizType === "SOUND" ? "AUDIO" : questionType) === "TEXT" ? <label className={adminFieldClass}><span>QUESTION</span><textarea value={questionText} onChange={(event) => setQuestionText(event.target.value)} rows={2} placeholder="What does ಮನೆ mean?" required /></label> : assetSelect("QUESTION ASSET", quizType === "SOUND" || questionType === "AUDIO" ? "AUDIO" : "IMAGE", questionAssetId, setQuestionAssetId)}
@@ -489,7 +482,7 @@ export default function AdminPage() {
                   </div>)}
                   <button className="w-max py-1 text-[10px] font-semibold text-[#183e35] hover:text-[#c54832]" type="button" onClick={() => setOptions((current) => [...current, emptyOption(current.length)])}>+ Add option</button>
                   <button className={adminPrimaryClass} type="submit" disabled={busy}>Add draft question <span aria-hidden="true">+</span></button>
-                </form> : <p className="my-3 text-[11px] leading-relaxed text-neutral-500">A quiz is created automatically with this subsection.</p>}
+                </form>
               </section>
             </>}
           </div> : <div className="grid grid-cols-[minmax(280px,.8fr)_minmax(0,1.2fr)] items-start gap-[15px] pt-5 max-[900px]:grid-cols-1">
