@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import type { Swiper as SwiperInstance } from "swiper";
+import { useEffect, useState } from "react";
 import { A11y, Keyboard, Mousewheel } from "swiper/modules";
 import { Swiper, SwiperSlide } from "swiper/react";
 
@@ -22,9 +21,13 @@ type QuizOption = { id: string; type: "TEXT" | "IMAGE" | "AUDIO"; text?: string 
 type QuizItem = {
   id: string;
   type: "SCQ" | "MCQ" | "SOUND";
+  sequence: number;
   question: Content;
   options: QuizOption[];
 };
+type OrderedLessonSlide =
+  | { kind: "learning"; sequence: number; itemIndex: number; item: LearningItem }
+  | { kind: "quiz"; sequence: number; itemIndex: number; item: QuizItem };
 type Subsection = {
   id: string;
   title: string;
@@ -40,13 +43,7 @@ type Section = {
   image?: Asset | null;
   subsections: Subsection[];
 };
-type QuizResult = {
-  subsectionId: string;
-  totalItems: number;
-  correctItems: number;
-  percentage: number;
-  itemResults: { quizItemId: string; correct: boolean; correctOptionIds: string[] }[];
-};
+type QuizItemResult = { correct: boolean; correctOptionIds: string[] };
 const apiUrl = (process.env.NEXT_PUBLIC_API_URL || "https://dev.learnkannada.co.in/api").replace(/\/$/, "");
 
 function Media({ content, className = "" }: { content: Content; className?: string }) {
@@ -78,10 +75,9 @@ export default function Home() {
   const [catalogState, setCatalogState] = useState<"loading" | "ready" | "error">("loading");
   const [lessonPickerOpen, setLessonPickerOpen] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
-  const [result, setResult] = useState<QuizResult | null>(null);
-  const [submitError, setSubmitError] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const swiperRef = useRef<SwiperInstance | null>(null);
+  const [quizResults, setQuizResults] = useState<Record<string, QuizItemResult>>({});
+  const [quizErrors, setQuizErrors] = useState<Record<string, string>>({});
+  const [checkingQuizItems, setCheckingQuizItems] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     const controller = new AbortController();
@@ -114,14 +110,18 @@ export default function Home() {
     : undefined;
   const nextLesson = nextSubsection || nextSection?.subsections[0];
   const quizItems = activeSubsection?.quizItems || [];
+  const orderedLessonSlides: OrderedLessonSlide[] = activeSubsection ? [
+    ...activeSubsection.learningItems.map((item, itemIndex) => ({ kind: "learning" as const, sequence: item.sequence, itemIndex, item })),
+    ...quizItems.map((item, itemIndex) => ({ kind: "quiz" as const, sequence: item.sequence, itemIndex, item })),
+  ].sort((left, right) => left.sequence - right.sequence || (left.kind === "learning" ? -1 : right.kind === "learning" ? 1 : 0)) : [];
   const answeredCount = quizItems.filter((item) => (answers[item.id]?.length || 0) > 0).length;
 
   const chooseSection = (section: Section) => {
     setActiveSectionId(section.id);
     setActiveSubsectionId(section.subsections[0]?.id || "");
     setAnswers({});
-    setResult(null);
-    setSubmitError("");
+    setQuizResults({});
+    setQuizErrors({});
     setLessonPickerOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -129,17 +129,10 @@ export default function Home() {
   const chooseSubsection = (subsection: Subsection) => {
     setActiveSubsectionId(subsection.id);
     setAnswers({});
-    setResult(null);
-    setSubmitError("");
+    setQuizResults({});
+    setQuizErrors({});
     setLessonPickerOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-
-  const startQuiz = () => {
-    setAnswers({});
-    setResult(null);
-    setSubmitError("");
-    swiperRef.current?.slideTo(activeSubsection?.learningItems.length || 0);
   };
 
   const toggleAnswer = (item: QuizItem, optionId: string) => {
@@ -150,28 +143,49 @@ export default function Home() {
         : [optionId];
       return { ...current, [item.id]: next };
     });
+    setQuizResults((current) => {
+      const next = { ...current };
+      delete next[item.id];
+      return next;
+    });
+    setQuizErrors((current) => {
+      const next = { ...current };
+      delete next[item.id];
+      return next;
+    });
   };
 
-  const checkScore = async () => {
+  const checkAnswer = async (item: QuizItem) => {
     if (!activeSubsection) return;
-    setSubmitting(true);
-    setSubmitError("");
+    const selectedOptionIds = answers[item.id] || [];
+    if (!selectedOptionIds.length) {
+      setQuizErrors((current) => ({ ...current, [item.id]: "Choose an answer first." }));
+      return;
+    }
+    setCheckingQuizItems((current) => ({ ...current, [item.id]: true }));
+    setQuizErrors((current) => {
+      const next = { ...current };
+      delete next[item.id];
+      return next;
+    });
     try {
-      const response = await fetch(`${apiUrl}/subsections/${activeSubsection.id}/quiz/submit`, {
+      const response = await fetch(`${apiUrl}/quiz-items/${item.id}/check`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          answers: Object.entries(answers).map(([quizItemId, selectedOptionIds]) => ({ quizItemId, selectedOptionIds })),
-        }),
+        body: JSON.stringify({ selectedOptionIds }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.message || "Your answers could not be checked.");
-      setResult(body.result as QuizResult);
-      requestAnimationFrame(() => swiperRef.current?.slideTo(activeSubsection.learningItems.length + quizItems.length + 1));
+      const itemResult = body.result as QuizItemResult;
+      setQuizResults((current) => ({ ...current, [item.id]: itemResult }));
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : "Your answers could not be checked.");
+      setQuizErrors((current) => ({ ...current, [item.id]: error instanceof Error ? error.message : "Your answer could not be checked." }));
     } finally {
-      setSubmitting(false);
+      setCheckingQuizItems((current) => {
+        const next = { ...current };
+        delete next[item.id];
+        return next;
+      });
     }
   };
 
@@ -205,69 +219,47 @@ export default function Home() {
 
               <div className="flex items-center gap-3 py-4 text-[11px] text-neutral-500"><span>{activeSubsection.learningItems.length} learning {activeSubsection.learningItems.length === 1 ? "card" : "cards"}</span><span className="h-px w-6 bg-neutral-300" /><span className="text-[9px] font-semibold tracking-[.1em] text-neutral-600">SCROLL TO LEARN &amp; PRACTICE</span></div>
               {activeSubsection.learningItems.length > 0 || quizItems.length > 0 ? (
-                <Swiper key={activeSubsection.id} modules={[A11y, Keyboard, Mousewheel]} direction="vertical" slidesPerView={1} spaceBetween={12} keyboard={{ enabled: true, onlyInViewport: true }} mousewheel={{ forceToAxis: true, releaseOnEdges: true, sensitivity: 0.8 }} className="mx-auto h-[min(70vh,650px)] min-h-[450px] w-full max-w-[760px] overflow-hidden max-[760px]:h-[68svh] max-[760px]:min-h-[440px] max-[420px]:min-h-[420px]" role="region" aria-label="Scrollable lesson cards" onSwiper={(swiper) => { swiperRef.current = swiper; }}>
-                  {activeSubsection.learningItems.map((item, index) => (
-                    <SwiperSlide key={item.id}>
+                <Swiper key={activeSubsection.id} modules={[A11y, Keyboard, Mousewheel]} direction="vertical" slidesPerView={1} spaceBetween={12} keyboard={{ enabled: true, onlyInViewport: true }} mousewheel={{ forceToAxis: true, releaseOnEdges: true, sensitivity: 0.8 }} className="mx-auto h-[min(70vh,650px)] min-h-[450px] w-full max-w-[760px] overflow-hidden max-[760px]:h-[68svh] max-[760px]:min-h-[440px] max-[420px]:min-h-[420px]" role="region" aria-label="Scrollable lesson cards">
+                  {orderedLessonSlides.map((slide) => slide.kind === "learning" ? (
+                    <SwiperSlide key={`learning-${slide.item.id}`}>
                       <article className="grid h-full w-full grid-cols-2 overflow-hidden border border-[var(--line)] bg-white max-[760px]:grid-cols-1 max-[760px]:grid-rows-[44%_56%] max-[420px]:grid-rows-[42%_58%]">
-                        <div className={`relative grid min-w-0 place-items-center overflow-hidden text-[var(--forest)] ${item.type === "SOUND" ? "bg-[#d9e9e4]" : "bg-[#efd695]"}`}>
-                          {item.image ? <img className="absolute inset-0 h-full w-full object-cover" src={item.image.url} alt={item.image.title} /> : <span className="text-[78px] leading-[1.3] max-[760px]:text-[62px]" lang="kn">{item.type === "WORD" ? item.word : item.sound}</span>}
-                          <span className="absolute bottom-3 right-3 bg-[#192522d9] px-[9px] py-[7px] font-mono text-[9px] text-white">{String(index + 1).padStart(2, "0")} / {String(activeSubsection.learningItems.length).padStart(2, "0")}</span>
+                        <div className={`relative grid min-w-0 place-items-center overflow-hidden text-[var(--forest)] ${slide.item.type === "SOUND" ? "bg-[#d9e9e4]" : "bg-[#efd695]"}`}>
+                          {slide.item.image ? <img className="absolute inset-0 h-full w-full object-cover" src={slide.item.image.url} alt={slide.item.image.title} /> : <span className="text-[78px] leading-[1.3] max-[760px]:text-[62px]" lang="kn">{slide.item.type === "WORD" ? slide.item.word : slide.item.sound}</span>}
+                          <span className="absolute bottom-3 right-3 bg-[#192522d9] px-[9px] py-[7px] font-mono text-[9px] text-white">{String(slide.itemIndex + 1).padStart(2, "0")} / {String(activeSubsection.learningItems.length).padStart(2, "0")}</span>
                         </div>
                         <div className="flex min-w-0 flex-col justify-center p-[clamp(22px,4vw,46px)] max-[760px]:p-4 max-[420px]:px-[19px]">
-                          <span className="text-[9px] font-extrabold tracking-[.13em] text-[var(--vermilion)]">{item.type === "WORD" ? "WORD" : "SOUND"}</span>
-                          <h3 className="my-2 mt-[18px] break-words text-[45px] font-medium leading-[1.35] text-[var(--forest)] max-[760px]:my-[3px] max-[760px]:mt-2 max-[760px]:text-[36px]" lang="kn">{item.type === "WORD" ? item.word : item.sound}</h3>
-                          <p className="m-0 break-words font-serif text-[22px] leading-[1.4] text-[var(--ink)] max-[760px]:text-[18px]">{item.type === "WORD" ? item.meaning : item.description || "Listen and repeat"}</p>
-                          {item.audio && <audio className="mt-[23px] h-9 w-full accent-[var(--vermilion)] max-[760px]:mt-[10px]" controls preload="none" src={item.audio.url}>{item.audio.title}</audio>}
+                          <span className="text-[9px] font-extrabold tracking-[.13em] text-[var(--vermilion)]">{slide.item.type === "WORD" ? "WORD" : "SOUND"}</span>
+                          <h3 className="my-2 mt-[18px] break-words text-[45px] font-medium leading-[1.35] text-[var(--forest)] max-[760px]:my-[3px] max-[760px]:mt-2 max-[760px]:text-[36px]" lang="kn">{slide.item.type === "WORD" ? slide.item.word : slide.item.sound}</h3>
+                          <p className="m-0 break-words font-serif text-[22px] leading-[1.4] text-[var(--ink)] max-[760px]:text-[18px]">{slide.item.type === "WORD" ? slide.item.meaning : slide.item.description || "Listen and repeat"}</p>
+                          {slide.item.audio && <audio className="mt-[23px] h-9 w-full accent-[var(--vermilion)] max-[760px]:mt-[10px]" controls preload="none" src={slide.item.audio.url}>{slide.item.audio.title}</audio>}
                           <span className="mt-7 flex justify-between text-[10px] text-[#7a867f] max-[760px]:mt-[10px]">Scroll for the next card <span className="text-[var(--vermilion)]" aria-hidden="true">↓</span></span>
                         </div>
                       </article>
                     </SwiperSlide>
-                  ))}
-
-                  {quizItems.map((item, index) => (
-                    <SwiperSlide key={item.id}>
+                  ) : (
+                    <SwiperSlide key={`quiz-${slide.item.id}`}>
                       <article className="grid h-full w-full grid-cols-2 items-center gap-8 overflow-y-auto border border-neutral-200 bg-neutral-50 p-8 max-[760px]:grid-cols-1 max-[760px]:gap-5 max-[760px]:p-5">
                         <div>
-                          <span className="text-[9px] font-semibold tracking-[.1em] text-neutral-500">QUIZ QUESTION {String(index + 1).padStart(2, "0")} / {String(quizItems.length).padStart(2, "0")}</span>
-                          <h3 className="my-3 text-xl font-medium text-neutral-900">{item.type === "MCQ" ? "Choose all that apply" : item.type === "SOUND" ? "Listen closely" : "Choose one answer"}</h3>
-                          <div className="question-content"><Media content={item.question} /></div>
+                          <span className="text-[9px] font-semibold tracking-[.1em] text-neutral-500">QUIZ QUESTION {String(slide.itemIndex + 1).padStart(2, "0")} / {String(quizItems.length).padStart(2, "0")}</span>
+                          <h3 className="my-3 text-xl font-medium text-neutral-900">{slide.item.type === "MCQ" ? "Choose all that apply" : slide.item.type === "SOUND" ? "Listen closely" : "Choose one answer"}</h3>
+                          <div className="question-content"><Media content={slide.item.question} /></div>
                         </div>
                         <div className="option-list">
-                          {item.options.map((option, optionIndex) => {
-                            const selected = (answers[item.id] || []).includes(option.id);
-                            return <button key={option.id} type="button" disabled={Boolean(result)} aria-pressed={selected} className={`quiz-option ${selected ? "is-selected" : ""}`} onClick={() => toggleAnswer(item, option.id)}>
+                          {slide.item.options.map((option, optionIndex) => {
+                            const selected = (answers[slide.item.id] || []).includes(option.id);
+                            return <button key={option.id} type="button" disabled={Boolean(checkingQuizItems[slide.item.id])} aria-pressed={selected} className={`quiz-option ${selected ? "is-selected" : ""}`} onClick={() => toggleAnswer(slide.item, option.id)}>
                               <span className="option-key">{String.fromCharCode(65 + optionIndex)}</span><QuizOptionContent option={option} /><span className="option-check" aria-hidden="true">{selected ? "✓" : ""}</span>
                             </button>;
                           })}
+                          {quizErrors[slide.item.id] && <p className="m-0 text-xs text-red-700" role="alert">{quizErrors[slide.item.id]}</p>}
+                          {quizResults[slide.item.id] && <p className={`m-0 text-xs font-medium ${quizResults[slide.item.id].correct ? "text-green-700" : "text-red-700"}`} role="status">{quizResults[slide.item.id].correct ? "Correct!" : `Incorrect. Correct answer: ${slide.item.options.filter((option) => quizResults[slide.item.id].correctOptionIds.includes(option.id)).map((option) => option.text || option.asset?.title || "Media answer").join(", ") || "See the media option"}`}</p>}
+                          <button className="primary-button w-full" type="button" disabled={Boolean(checkingQuizItems[slide.item.id])} onClick={() => checkAnswer(slide.item)}>{checkingQuizItems[slide.item.id] ? "Checking..." : "Check answer"}<span aria-hidden="true">↗</span></button>
                         </div>
                         <span className="col-span-2 text-[10px] text-neutral-500 max-[760px]:col-span-1">{answeredCount} of {quizItems.length} answered</span>
                       </article>
                     </SwiperSlide>
                   ))}
 
-                  {quizItems.length > 0 && <SwiperSlide key="quiz-submit"><article className="flex h-full w-full flex-col items-center justify-center gap-4 border border-neutral-200 bg-white px-8 py-10 text-center max-[760px]:px-5" aria-label="Submit quiz answers">
-                    <span className="text-[9px] font-semibold tracking-[.1em] text-neutral-500">END OF QUIZ</span>
-                    <h3 className="m-0 text-xl font-medium text-neutral-900">Ready to check your answers?</h3>
-                    <p className="m-0 text-xs text-neutral-500">{answeredCount} of {quizItems.length} answered</p>
-                    {submitError && <p className="m-0 text-xs text-red-700" role="alert">{submitError}</p>}
-                    <button className="primary-button" disabled={submitting} onClick={checkScore}>{submitting ? "Checking..." : "Check score"}<span aria-hidden="true">↗</span></button>
-                  </article></SwiperSlide>}
-
-                  {result && <SwiperSlide key="quiz-results"><article className="h-full w-full overflow-y-auto border border-neutral-200 bg-white p-8 max-[760px]:p-5">
-                    <span className="text-[9px] font-semibold tracking-[.1em] text-neutral-500">QUIZ COMPLETE</span>
-                    <h3 className="mb-2 mt-2 text-2xl font-medium text-neutral-900">Your score: {result.percentage}%</h3>
-                    <p className="m-0 text-sm text-neutral-600">You got <strong>{result.correctItems} of {result.totalItems}</strong> correct.</p>
-                    <div className="mt-5">
-                      <h4 className="mb-1 text-sm font-semibold text-neutral-800">Answer review</h4>
-                      {quizItems.map((item, index) => {
-                        const itemResult = result.itemResults.find((entry) => entry.quizItemId === item.id);
-                        const selected = answers[item.id] || [];
-                        const correctLabels = item.options.filter((option) => itemResult?.correctOptionIds.includes(option.id)).map((option) => option.text || option.asset?.title || "Media answer");
-                        return <div className="review-row" key={item.id}><span className={`review-status ${itemResult?.correct ? "good" : "bad"}`}>{itemResult?.correct ? "✓" : "×"}</span><div><span className="review-label">QUESTION {String(index + 1).padStart(2, "0")}</span><p>{itemResult?.correct ? "Correct" : `Correct answer: ${correctLabels.join(", ") || "See the media option"}`}</p><small>{selected.length ? `${selected.length} option${selected.length === 1 ? "" : "s"} selected` : "No answer selected"}</small></div></div>;
-                      })}
-                    </div>
-                    <button className="primary-button mt-5" onClick={startQuiz}>Try again <span aria-hidden="true">↗</span></button>
-                  </article></SwiperSlide>}
                 </Swiper>
               ) : <p className="border border-dashed border-neutral-300 p-5 text-sm text-neutral-500">Learning cards for this lesson have not been published yet.</p>}
 

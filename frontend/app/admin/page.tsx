@@ -11,6 +11,7 @@ type Option = { id: string; sequence: number; type: ContentType; text: string | 
 type QuizItem = { id: string; type: "SCQ" | "MCQ" | "SOUND"; sequence: number; questionType: ContentType; questionText: string | null; questionAsset: Asset | null; visibility: Visibility; options: Option[] };
 type LearningItem = { id: string; type: "WORD" | "SOUND"; sequence: number; word: string | null; meaning: string | null; sound: string | null; description: string | null; visibility: Visibility };
 type Subsection = { id: string; title: string; description: string; sequence: number; visibility: Visibility; learningItems: LearningItem[]; quizItems: QuizItem[] };
+type OrderedSubsectionItem = { kind: "learning"; sequence: number; item: LearningItem } | { kind: "quiz"; sequence: number; item: QuizItem };
 type Section = { id: string; title: string; description: string; sequence: number; visibility: Visibility; subsections: Subsection[] };
 type Catalog = { sections: Section[]; assets: Asset[] };
 type OptionDraft = { id: string; type: ContentType; text: string; assetId: string; isCorrect: boolean };
@@ -33,6 +34,14 @@ async function apiRequest<T>(path: string, token: string, init: RequestInit = {}
 
 function emptyOption(index: number): OptionDraft {
   return { id: `option-${Date.now()}-${index}`, type: "TEXT", text: "", assetId: "", isCorrect: index === 0 };
+}
+
+function nextContentSequence(subsection?: Pick<Subsection, "learningItems" | "quizItems">): string {
+  const sequences = [
+    ...(subsection?.learningItems || []).map((item) => item.sequence),
+    ...(subsection?.quizItems || []).map((item) => item.sequence),
+  ];
+  return String(Math.max(0, ...sequences) + 1);
 }
 
 const adminFieldClass = "grid min-w-0 gap-1.5 text-[10px] font-semibold text-neutral-600 [&>span]:flex [&>span]:justify-between [&>span]:text-[9px] [&>span]:font-bold [&>span]:tracking-[.08em] [&>span>small]:text-neutral-400 [&_input]:min-h-[38px] [&_input]:w-full [&_input]:border [&_input]:border-neutral-200 [&_input]:bg-white [&_input]:px-2.5 [&_input]:py-2 [&_input]:text-[11px] [&_input]:font-normal [&_textarea]:min-h-16 [&_textarea]:w-full [&_textarea]:resize-y [&_textarea]:border [&_textarea]:border-neutral-200 [&_textarea]:bg-white [&_textarea]:px-2.5 [&_textarea]:py-2 [&_textarea]:text-[11px] [&_textarea]:font-normal [&_select]:min-h-[38px] [&_select]:w-full [&_select]:border [&_select]:border-neutral-200 [&_select]:bg-white [&_select]:px-2.5 [&_select]:py-2 [&_select]:text-[11px] [&_select]:font-normal [&_input:focus]:outline-2 [&_textarea:focus]:outline-2 [&_select:focus]:outline-2 [&_input:focus]:outline-neutral-400 [&_textarea:focus]:outline-neutral-400 [&_select:focus]:outline-neutral-400";
@@ -89,14 +98,28 @@ export default function AdminPage() {
   const selectedSection = catalog.sections.find((section) => section.id === selectedSectionId) || catalog.sections[0];
   const selectedSubsection = selectedSection?.subsections.find((subsection) => subsection.id === selectedSubsectionId)
     || selectedSection?.subsections[0];
+  const orderedSubsectionItems: OrderedSubsectionItem[] = selectedSubsection
+    ? [
+      ...selectedSubsection.learningItems.map((item) => ({ kind: "learning" as const, sequence: item.sequence, item })),
+      ...selectedSubsection.quizItems.map((item) => ({ kind: "quiz" as const, sequence: item.sequence, item })),
+    ].sort((left, right) => left.sequence - right.sequence || (left.kind === "learning" ? -1 : right.kind === "learning" ? 1 : 0))
+    : [];
 
   const loadCatalog = async (authToken: string) => {
     const data = await apiRequest<Catalog>("/admin/catalog", authToken);
     setCatalog(data);
-    setSelectedSectionId((current) => data.sections.some((section) => section.id === current) ? current : data.sections[0]?.id || "");
-    setSelectedSubsectionId((current) => data.sections.some((section) => section.subsections.some((subsection) => subsection.id === current))
-      ? current
-      : data.sections[0]?.subsections[0]?.id || "");
+    const nextSection = data.sections.find((section) => section.id === selectedSectionId) || data.sections[0];
+    const nextSubsection = nextSection?.subsections.find((subsection) => subsection.id === selectedSubsectionId) || nextSection?.subsections[0];
+    const nextSequence = nextContentSequence(nextSubsection);
+    setSelectedSectionId(nextSection?.id || "");
+    setSelectedSubsectionId(nextSubsection?.id || "");
+    setLearningSequence(nextSequence);
+    setQuizSequence(nextSequence);
+    const currentSection = data.sections.find((section) => section.id === selectedSectionId) || data.sections[0];
+    const currentSubsection = currentSection?.subsections.find((subsection) => subsection.id === selectedSubsectionId) || currentSection?.subsections[0];
+    const sequence = nextContentSequence(currentSubsection);
+    setLearningSequence(sequence);
+    setQuizSequence(sequence);
   };
 
   const unlock = async (event: FormEvent<HTMLFormElement>) => {
@@ -161,6 +184,8 @@ export default function AdminPage() {
       });
       await loadCatalog(token);
       setSelectedSubsectionId(response.subsection.id);
+      setLearningSequence("1");
+      setQuizSequence("1");
       setSubsectionTitle("");
       setSubsectionDescription("");
       setSubsectionSequence(String(selectedSection.subsections.length + 2));
@@ -245,7 +270,9 @@ export default function AdminPage() {
       setMeaning("");
       setSound("");
       setLearningDescription("");
-      setLearningSequence(String(selectedSubsection.learningItems.length + 2));
+      const nextSequence = String(Math.max(Number(learningSequence), Number(nextContentSequence(selectedSubsection)) - 1) + 1);
+      setLearningSequence(nextSequence);
+      setQuizSequence(nextSequence);
     }, "Draft learning item created.");
   };
 
@@ -288,7 +315,9 @@ export default function AdminPage() {
       await loadCatalog(token);
       setQuestionText("");
       setQuestionAssetId("");
-      setQuizSequence(String(selectedSubsection.quizItems.length + 2));
+      const nextSequence = String(Math.max(Number(quizSequence), Number(nextContentSequence(selectedSubsection)) - 1) + 1);
+      setQuizSequence(nextSequence);
+      setLearningSequence(nextSequence);
       setOptions([emptyOption(0), emptyOption(1), emptyOption(2), emptyOption(3)]);
     }, "Draft quiz question created.");
   };
@@ -388,13 +417,13 @@ export default function AdminPage() {
               {catalog.sections.map((section, index) => (
                 <div key={section.id}>
                   <div className="flex items-center gap-1">
-                    <button className={`grid min-h-10 min-w-0 flex-1 grid-cols-[21px_minmax(0,1fr)_6px] items-center gap-1.5 px-2 text-left ${section.id === selectedSection?.id ? "bg-neutral-100 text-neutral-900" : "text-neutral-600 hover:bg-neutral-50"}`} onClick={() => { setSelectedSectionId(section.id); setSelectedSubsectionId(section.subsections[0]?.id || ""); setEditingSectionId(""); setEditingSubsectionId(""); }}>
+                    <button className={`grid min-h-10 min-w-0 flex-1 grid-cols-[21px_minmax(0,1fr)_6px] items-center gap-1.5 px-2 text-left ${section.id === selectedSection?.id ? "bg-neutral-100 text-neutral-900" : "text-neutral-600 hover:bg-neutral-50"}`} onClick={() => { setSelectedSectionId(section.id); setSelectedSubsectionId(section.subsections[0]?.id || ""); const nextSequence = nextContentSequence(section.subsections[0]); setLearningSequence(nextSequence); setQuizSequence(nextSequence); setEditingSectionId(""); setEditingSubsectionId(""); }}>
                       <span className="font-mono text-[9px] text-neutral-400">{String(index + 1).padStart(2, "0")}</span><strong className="overflow-hidden text-ellipsis whitespace-nowrap text-[11px] font-semibold">{section.title}</strong><i className={`size-1.5 rounded-full ${section.visibility === "PUBLIC" ? "bg-green-600" : "bg-amber-500"}`} />
                     </button>
                     {publishButton("sections", section.id, section.visibility)}
                   </div>
                   {section.id === selectedSection?.id && section.subsections.map((subsection) => (
-                    <button key={subsection.id} className={`ml-[19px] flex min-h-8 w-[calc(100%-19px)] items-center gap-2 px-2 text-left text-[10px] ${subsection.id === selectedSubsection?.id ? "text-[#c54832]" : "text-neutral-500 hover:text-neutral-800"}`} onClick={() => { setSelectedSubsectionId(subsection.id); setEditingSubsectionId(""); }}><span className={`size-1 rounded-full ${subsection.id === selectedSubsection?.id ? "bg-[#c54832]" : "bg-neutral-400"}`} />{subsection.title}</button>
+                    <button key={subsection.id} className={`ml-[19px] flex min-h-8 w-[calc(100%-19px)] items-center gap-2 px-2 text-left text-[10px] ${subsection.id === selectedSubsection?.id ? "text-[#c54832]" : "text-neutral-500 hover:text-neutral-800"}`} onClick={() => { setSelectedSubsectionId(subsection.id); const nextSequence = nextContentSequence(subsection); setLearningSequence(nextSequence); setQuizSequence(nextSequence); setEditingSubsectionId(""); }}><span className={`size-1 rounded-full ${subsection.id === selectedSubsection?.id ? "bg-[#c54832]" : "bg-neutral-400"}`} />{subsection.title}</button>
                   ))}
                 </div>
               ))}
@@ -448,8 +477,9 @@ export default function AdminPage() {
                 </form>}
                 <div className="flex flex-wrap gap-4 border-y border-neutral-200 py-2.5 text-[9px] text-neutral-500"><span>{selectedSection?.title}</span><span>{selectedSubsection.learningItems.length} learning items</span><span>{selectedSubsection.quizItems.length} quiz questions</span></div>
                 <div className="grid">
-                  {selectedSubsection.learningItems.map((item) => <div className="grid min-h-[49px] grid-cols-[65px_minmax(80px,.8fr)_minmax(80px,1fr)_auto] items-center gap-[11px] border-b border-neutral-100 max-[640px]:grid-cols-[55px_minmax(45px,.7fr)_minmax(50px,1fr)_auto] max-[640px]:gap-1.5" key={item.id}><span className="w-max bg-neutral-100 px-1.5 py-1 text-[8px] font-bold tracking-wide text-[#183e35]">{item.type}</span><strong className="overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-neutral-900 max-[640px]:text-[9px]" lang="kn">{item.type === "WORD" ? item.word : item.sound}</strong><span className="overflow-hidden text-ellipsis whitespace-nowrap text-[10px] text-neutral-500 max-[640px]:text-[8px]">{item.type === "WORD" ? item.meaning : item.description}</span>{publishButton("learning-items", item.id, item.visibility)}</div>)}
-                  {selectedSubsection.quizItems.map((item) => <div className="grid min-h-[49px] grid-cols-[65px_minmax(80px,.8fr)_minmax(80px,1fr)_auto] items-center gap-[11px] border-b border-neutral-100 max-[640px]:grid-cols-[55px_minmax(45px,.7fr)_minmax(50px,1fr)_auto] max-[640px]:gap-1.5" key={item.id}><span className="w-max bg-red-50 px-1.5 py-1 text-[8px] font-bold tracking-wide text-red-800">{item.type}</span><strong className="overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-neutral-900 max-[640px]:text-[9px]">Question {item.sequence}</strong><span className="overflow-hidden text-ellipsis whitespace-nowrap text-[10px] text-neutral-500 max-[640px]:text-[8px]">{item.questionText || item.questionAsset?.title || item.options.length + " options"}</span>{publishButton("quiz-items", item.id, item.visibility)}</div>)}
+                  {orderedSubsectionItems.map((entry) => entry.kind === "learning"
+                    ? <div className="grid min-h-[49px] grid-cols-[65px_minmax(80px,.8fr)_minmax(80px,1fr)_auto] items-center gap-[11px] border-b border-neutral-100 max-[640px]:grid-cols-[55px_minmax(45px,.7fr)_minmax(50px,1fr)_auto] max-[640px]:gap-1.5" key={`learning-${entry.item.id}`}><span className="font-mono text-[10px] text-neutral-500">{entry.sequence}</span><strong className="overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-neutral-900 max-[640px]:text-[9px]" lang="kn">{entry.item.type} · {entry.item.type === "WORD" ? entry.item.word : entry.item.sound}</strong><span className="overflow-hidden text-ellipsis whitespace-nowrap text-[10px] text-neutral-500 max-[640px]:text-[8px]">{entry.item.type === "WORD" ? entry.item.meaning : entry.item.description}</span>{publishButton("learning-items", entry.item.id, entry.item.visibility)}</div>
+                    : <div className="grid min-h-[49px] grid-cols-[65px_minmax(80px,.8fr)_minmax(80px,1fr)_auto] items-center gap-[11px] border-b border-neutral-100 max-[640px]:grid-cols-[55px_minmax(45px,.7fr)_minmax(50px,1fr)_auto] max-[640px]:gap-1.5" key={`quiz-${entry.item.id}`}><span className="font-mono text-[10px] text-neutral-500">{entry.sequence}</span><strong className="overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-neutral-900 max-[640px]:text-[9px]">QUIZ · Question {entry.item.sequence}</strong><span className="overflow-hidden text-ellipsis whitespace-nowrap text-[10px] text-neutral-500 max-[640px]:text-[8px]">{entry.item.questionText || entry.item.questionAsset?.title || entry.item.options.length + " options"}</span>{publishButton("quiz-items", entry.item.id, entry.item.visibility)}</div>)}
                   {!selectedSubsection.learningItems.length && !selectedSubsection.quizItems.length && <p className="my-3 text-[11px] leading-relaxed text-neutral-500">This subsection is empty. Add learning material or quiz questions below.</p>}
                 </div>
               </> : <p className="my-3 text-[11px] leading-relaxed text-neutral-500">Select a lesson in the left navigation to manage its content.</p>}
