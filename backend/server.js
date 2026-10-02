@@ -462,6 +462,15 @@ app.patch('/admin/learning-items/:id', async (req, res, next) => {
   }
 });
 
+app.delete('/admin/learning-items/:id', async (req, res, next) => {
+  try {
+    await prisma.learningItem.delete({ where: { id: req.params.id } });
+    res.status(204).end();
+  } catch (error) {
+    next(error);
+  }
+});
+
 async function parseQuizItem(body, current) {
   const type = body.type || current?.type;
   if (!['SCQ', 'MCQ', 'SOUND'].includes(type)) throw httpError(400, 'type must be SCQ, MCQ, or SOUND');
@@ -549,6 +558,15 @@ app.patch('/admin/quiz-items/:id', async (req, res, next) => {
     const current = await prisma.quizItem.findUniqueOrThrow({ where: { id: req.params.id } });
     const item = await writeQuizItem(await parseQuizItem(req.body, current), current.id);
     res.json({ quizItem: item });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/admin/quiz-items/:id', async (req, res, next) => {
+  try {
+    await prisma.quizItem.delete({ where: { id: req.params.id } });
+    res.status(204).end();
   } catch (error) {
     next(error);
   }
