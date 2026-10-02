@@ -396,6 +396,15 @@ app.patch('/admin/sections/:id', async (req, res, next) => {
   }
 });
 
+app.delete('/admin/sections/:id', async (req, res, next) => {
+  try {
+    await prisma.section.delete({ where: { id: req.params.id } });
+    res.status(204).end();
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/admin/subsections', async (req, res, next) => {
   try {
     const sectionId = requiredString(req.body.sectionId, 'sectionId');
@@ -438,6 +447,15 @@ app.patch('/admin/subsections/:id', async (req, res, next) => {
     if (Object.hasOwn(req.body, 'imageAssetId')) data.imageAssetId = req.body.imageAssetId || null;
     await assertAsset(data.imageAssetId ?? current.imageAssetId, 'IMAGE', (data.visibility || current.visibility) === 'PUBLIC');
     res.json({ subsection: await prisma.subsection.update({ where: { id: current.id }, data }) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/admin/subsections/:id', async (req, res, next) => {
+  try {
+    await prisma.subsection.delete({ where: { id: req.params.id } });
+    res.status(204).end();
   } catch (error) {
     next(error);
   }

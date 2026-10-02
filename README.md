@@ -136,7 +136,9 @@ CloudFront; browser uploads use bucket CORS allowing PUT from the authoring
 origin.
 
 The Prisma v1 schema and initial migration live under `backend/prisma`. Apply the
-migration before starting the API:
+migration before starting the API. The Ansible deployment playbook runs
+`prisma migrate deploy` after generating the Prisma client; ensure `backend/.env`
+contains a valid `DATABASE_URL` for the existing `learnkannada` database.
 
 ```bash
 cd backend

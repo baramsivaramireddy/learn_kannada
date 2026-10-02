@@ -1,0 +1,94 @@
+- name: Deploy Learn Kannada application
+  hosts: myhosts
+  become: true
+  vars:
+    app_dir: /opt/learn-kannada
+    repository_url: https://github.com/baramsivaramireddy/learn_kannada.git
+    app_user: learnkannada
+    deploy_branch: main
+
+  tasks:
+    - name: Ensure application user exists
+      ansible.builtin.user:
+        name: '{{ app_user }}'
+        system: true
+        create_home: true
+        shell: /usr/sbin/nologin
+
+    - name: Ensure application directory exists
+      ansible.builtin.file:
+        path: '{{ app_dir }}'
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Clone or update application repository
+      ansible.builtin.git:
+        repo: '{{ repository_url }}'
+        dest: '{{ app_dir }}'
+        version: '{{ deploy_branch }}'
+        update: true
+        force: false
+      environment:
+        GIT_CONFIG_COUNT: '1'
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: '{{ app_dir }}'
+
+    - name: Copy backend environment file
+      ansible.builtin.copy:
+        src: '{{ playbook_dir }}/../../backend/.env'
+        dest: '{{ app_dir }}/backend/.env'
+        owner: '{{ app_user }}'
+        group: '{{ app_user }}'
+        mode: '0600'
+
+    - name: Install backend dependencies
+      ansible.builtin.command: npm ci --include=dev --no-audit --no-fund
+      args:
+        chdir: '{{ app_dir }}/backend'
+
+    - name: Generate Prisma client
+      ansible.builtin.command: npm run prisma:generate
+      args:
+        chdir: '{{ app_dir }}/backend'
+
+    - name: Apply database migrations
+      ansible.builtin.command: npx prisma migrate deploy
+      args:
+        chdir: '{{ app_dir }}/backend'
+
+    - name: Install frontend dependencies
+      ansible.builtin.command: npm ci --no-audit --no-fund
+      args:
+        chdir: '{{ app_dir }}/frontend'
+
+    - name: Build static frontend
+      ansible.builtin.command: npm run build
+      args:
+        chdir: '{{ app_dir }}/frontend'
+      environment:
+        NODE_OPTIONS: --max-old-space-size=768
+
+    - name: Set application ownership
+      ansible.builtin.file:
+        path: '{{ app_dir }}'
+        owner: '{{ app_user }}'
+        group: '{{ app_user }}'
+        recurse: true
+
+    - name: Restart backend service
+      ansible.builtin.systemd:
+        name: learn-kannada-backend
+        enabled: true
+        state: restarted
+
+    - name: Verify backend health
+      ansible.builtin.uri:
+        url: http://127.0.0.1:4000/health
+        method: GET
+        status_code: 200
+      register: backend_health
+      until: backend_health.status == 200
+      retries: 10
+      delay: 3
