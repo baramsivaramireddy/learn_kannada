@@ -4,12 +4,12 @@ function createHttpError(status, message) {
 	return error;
 }
 
-function evaluateQuiz(quiz, answers) {
+function evaluateQuizItems(subsectionId, quizItems, answers) {
 	if (!Array.isArray(answers)) {
 		throw createHttpError(400, "answers must be an array");
 	}
 
-	const itemsById = new Map(quiz.items.map((item) => [item.id, item]));
+	const itemsById = new Map(quizItems.map((item) => [item.id, item]));
 	const answersByItemId = new Map();
 
 	for (const answer of answers) {
@@ -33,7 +33,7 @@ function evaluateQuiz(quiz, answers) {
 		answersByItemId.set(answer.quizItemId, answer.selectedOptionIds);
 	}
 
-	const itemResults = quiz.items.map((item) => {
+	const itemResults = quizItems.map((item) => {
 		const correctOptionIds = item.options.filter((option) => option.isCorrect).map((option) => option.id);
 		const selectedOptionIds = answersByItemId.get(item.id) || [];
 		const correct = selectedOptionIds.length === correctOptionIds.length
@@ -41,19 +41,17 @@ function evaluateQuiz(quiz, answers) {
 
 		return { quizItemId: item.id, correct, correctOptionIds };
 	});
-	const totalItems = quiz.items.length;
+	const totalItems = quizItems.length;
 	const correctItems = itemResults.filter((result) => result.correct).length;
 	const percentage = totalItems ? Math.round((correctItems / totalItems) * 10000) / 100 : 0;
 
 	return {
-		quizId: quiz.id,
+		subsectionId,
 		totalItems,
 		correctItems,
 		percentage,
-		passingPercentage: quiz.passingPercentage,
-		passed: percentage >= quiz.passingPercentage,
 		itemResults,
 	};
 }
 
-module.exports = { createHttpError, evaluateQuiz };
+module.exports = { createHttpError, evaluateQuizItems };

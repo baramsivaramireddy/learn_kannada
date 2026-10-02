@@ -86,7 +86,7 @@ model Subsection {
   section       Section        @relation(fields: [sectionId], references: [id], onDelete: Cascade)
   image         Asset?         @relation("SubsectionImage", fields: [imageAssetId], references: [id], onDelete: SetNull)
   learningItems LearningItem[]
-  quiz          Quiz?
+  quizItems     QuizItem[]
 
   @@unique([sectionId, sequence])
   @@index([visibility, sequence])
@@ -115,21 +115,9 @@ model LearningItem {
   @@index([subsectionId, visibility, sequence])
 }
 
-model Quiz {
-  id                String     @id @default(cuid())
-  subsectionId      String     @unique
-  passingPercentage Float      @default(70)
-  visibility        Visibility @default(DRAFT)
-  createdAt         DateTime   @default(now())
-  updatedAt         DateTime   @updatedAt
-
-  subsection Subsection @relation(fields: [subsectionId], references: [id], onDelete: Cascade)
-  items      QuizItem[]
-}
-
 model QuizItem {
   id              String       @id @default(cuid())
-  quizId          String
+  subsectionId    String
   type            QuizItemType
   sequence        Float
   questionType    ContentType
@@ -139,12 +127,12 @@ model QuizItem {
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
-  quiz          Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  subsection    Subsection   @relation(fields: [subsectionId], references: [id], onDelete: Cascade)
   questionAsset Asset?       @relation("QuestionAsset", fields: [questionAssetId], references: [id], onDelete: SetNull)
   options       QuizOption[]
 
-  @@unique([quizId, sequence])
-  @@index([quizId, visibility, sequence])
+  @@unique([subsectionId, sequence])
+  @@index([subsectionId, visibility, sequence])
 }
 
 model QuizOption {

@@ -56,22 +56,18 @@ const learningItemInclude = {
   orderBy: { sequence: 'asc' },
   include: { image: assetInclude, audio: assetInclude },
 };
-const quizInclude = {
+const quizItemInclude = {
+  where: { visibility: 'PUBLIC' },
+  orderBy: { sequence: 'asc' },
   include: {
-    items: {
-      where: { visibility: 'PUBLIC' },
-      orderBy: { sequence: 'asc' },
-      include: {
-        questionAsset: assetInclude,
-        options: { orderBy: { sequence: 'asc' }, include: { asset: assetInclude } },
-      },
-    },
+    questionAsset: assetInclude,
+    options: { orderBy: { sequence: 'asc' }, include: { asset: assetInclude } },
   },
 };
 const subsectionInclude = {
   image: assetInclude,
   learningItems: learningItemInclude,
-  quiz: quizInclude,
+  quizItems: quizItemInclude,
 };
 const sectionInclude = {
   image: assetInclude,
@@ -94,7 +90,7 @@ function learnerOption(option) {
 }
 
 function learnerQuizItem(item) {
-  const { questionAsset, options, ...publicItem } = item;
+  const { questionAsset, options, visibility, ...publicItem } = item;
   return {
     ...publicItem,
     question: {
@@ -106,12 +102,6 @@ function learnerQuizItem(item) {
   };
 }
 
-function learnerQuiz(quiz) {
-  if (!quiz || quiz.visibility !== 'PUBLIC') return null;
-  const { visibility, items, ...publicQuiz } = quiz;
-  return { ...publicQuiz, items: items.map(learnerQuizItem) };
-}
-
 function learnerLearningItem(item) {
   return {
     ...item,
@@ -121,12 +111,12 @@ function learnerLearningItem(item) {
 }
 
 function learnerSubsection(subsection) {
-  const { visibility, image, learningItems, quiz, ...publicSubsection } = subsection;
+  const { visibility, image, learningItems, quizItems, ...publicSubsection } = subsection;
   return {
     ...publicSubsection,
     image: learnerAsset(image),
     learningItems: learningItems.map(learnerLearningItem),
-    quiz: learnerQuiz(quiz),
+    quizItems: quizItems.map(learnerQuizItem),
   };
 }
 
@@ -195,36 +185,19 @@ app.get('/catalog/subsections/:subsectionId', async (req, res, next) => {
   }
 });
 
-app.get('/catalog/quizzes/:quizId', async (req, res, next) => {
+app.post('/subsections/:subsectionId/quiz/submit', async (req, res, next) => {
   try {
-    const quiz = await prisma.quiz.findFirst({
+    const subsection = await prisma.subsection.findFirst({
       where: {
-        id: req.params.quizId,
+        id: req.params.subsectionId,
         visibility: 'PUBLIC',
-        subsection: { visibility: 'PUBLIC', section: { visibility: 'PUBLIC' } },
+        section: { visibility: 'PUBLIC' },
       },
-      include: quizInclude.include,
+      include: { quizItems: quizItemInclude },
     });
-    if (!quiz) return res.status(404).json({ message: 'Quiz not found' });
-    res.json({ quiz: learnerQuiz(quiz) });
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.post('/quizzes/:quizId/submit', async (req, res, next) => {
-  try {
-    const quiz = await prisma.quiz.findFirst({
-      where: {
-        id: req.params.quizId,
-        visibility: 'PUBLIC',
-        subsection: { visibility: 'PUBLIC', section: { visibility: 'PUBLIC' } },
-      },
-      include: quizInclude.include,
-    });
-    if (!quiz) return res.status(404).json({ message: 'Quiz not found' });
-    if (quiz.items.length === 0) return res.status(409).json({ message: 'This quiz has no published questions' });
-    res.json({ result: evaluateQuiz(quiz, req.body.answers) });
+    if (!subsection) return res.status(404).json({ message: 'Subsection not found' });
+    if (subsection.quizItems.length === 0) return res.status(409).json({ message: 'This subsection has no published quiz questions' });
+    res.json({ result: evaluateQuizItems(subsection.id, subsection.quizItems, req.body.answers) });
   } catch (error) {
     next(error);
   }
@@ -274,15 +247,11 @@ app.get('/admin/catalog', async (_req, res, next) => {
                 orderBy: { sequence: 'asc' },
                 include: { image: true, audio: true },
               },
-              quiz: {
+              quizItems: {
+                orderBy: { sequence: 'asc' },
                 include: {
-                  items: {
-                    orderBy: { sequence: 'asc' },
-                    include: {
-                      questionAsset: true,
-                      options: { orderBy: { sequence: 'asc' }, include: { asset: true } },
-                    },
-                  },
+                  questionAsset: true,
+                  options: { orderBy: { sequence: 'asc' }, include: { asset: true } },
                 },
               },
             },
@@ -411,23 +380,11 @@ app.post('/admin/subsections', async (req, res, next) => {
     const title = requiredString(req.body.title, 'title');
     const sequence = requiredSequence(req.body.sequence);
     const visibility = parseVisibility(req.body.visibility);
-    if (visibility === 'PUBLIC') throw httpError(400, 'Create subsections as DRAFT and publish them after adding learning items and a quiz');
+    if (visibility === 'PUBLIC') throw httpError(400, 'Create subsections as DRAFT and publish them after adding learning items and quiz questions');
     const imageAssetId = req.body.imageAssetId || null;
     await assertAsset(imageAssetId, 'IMAGE', visibility === 'PUBLIC');
-    const passingPercentage = Number(req.body.passingPercentage ?? 70);
-    if (!Number.isFinite(passingPercentage) || passingPercentage < 0 || passingPercentage > 100) throw httpError(400, 'passingPercentage must be between 0 and 100');
-    const subsection = await prisma.$transaction(async (transaction) => {
-      const created = await transaction.subsection.create({
-        data: { sectionId, title, description: req.body.description || '', sequence, imageAssetId, visibility },
-      });
-      await transaction.quiz.create({
-        data: {
-          subsectionId: created.id,
-          passingPercentage,
-          visibility: 'DRAFT',
-        },
-      });
-      return transaction.subsection.findUnique({ where: { id: created.id }, include: { quiz: true } });
+    const subsection = await prisma.subsection.create({
+      data: { sectionId, title, description: req.body.description || '', sequence, imageAssetId, visibility },
     });
     res.status(201).json({ subsection });
   } catch (error) {
@@ -502,43 +459,10 @@ app.patch('/admin/learning-items/:id', async (req, res, next) => {
   }
 });
 
-app.post('/admin/quizzes', async (req, res, next) => {
-  try {
-    const visibility = parseVisibility(req.body.visibility);
-    if (visibility === 'PUBLIC') throw httpError(400, 'Create quizzes as DRAFT and publish them after adding quiz questions');
-    const passingPercentage = Number(req.body.passingPercentage ?? 70);
-    if (!Number.isFinite(passingPercentage) || passingPercentage < 0 || passingPercentage > 100) throw httpError(400, 'passingPercentage must be between 0 and 100');
-    const quiz = await prisma.quiz.create({
-      data: {
-        subsectionId: requiredString(req.body.subsectionId, 'subsectionId'),
-        passingPercentage,
-        visibility,
-      },
-    });
-    res.status(201).json({ quiz });
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.patch('/admin/quizzes/:id', async (req, res, next) => {
-  try {
-    const data = {};
-    if (Object.hasOwn(req.body, 'passingPercentage')) {
-      const percentage = Number(req.body.passingPercentage);
-      if (!Number.isFinite(percentage) || percentage < 0 || percentage > 100) throw httpError(400, 'passingPercentage must be between 0 and 100');
-      data.passingPercentage = percentage;
-    }
-    if (Object.hasOwn(req.body, 'visibility')) data.visibility = parseVisibility(req.body.visibility);
-    res.json({ quiz: await prisma.quiz.update({ where: { id: req.params.id }, data }) });
-  } catch (error) {
-    next(error);
-  }
-});
-
 async function parseQuizItem(body, current) {
   const type = body.type || current?.type;
   if (!['SCQ', 'MCQ', 'SOUND'].includes(type)) throw httpError(400, 'type must be SCQ, MCQ, or SOUND');
+  const subsectionId = requiredString(current?.subsectionId || body.subsectionId, 'subsectionId');
   const question = readTextContent(body.question || (current ? {
     type: current.questionType,
     text: current.questionText,
@@ -565,7 +489,7 @@ async function parseQuizItem(body, current) {
   if (type === 'MCQ' && distinctCorrectIds.size < 1) throw httpError(400, 'MCQ requires at least one correct option');
   await validateContentAsset(question, parseVisibility(body.visibility, current?.visibility) === 'PUBLIC');
   return {
-    quizId: body.quizId || current?.quizId,
+    subsectionId,
     type,
     sequence: requiredSequence(body.sequence ?? current?.sequence),
     visibility: parseVisibility(body.visibility, current?.visibility),
@@ -590,7 +514,7 @@ async function writeQuizItem(data, id) {
       })
       : await transaction.quizItem.create({
         data: {
-          quizId: data.quizId,
+          subsectionId: data.subsectionId,
           type: data.type,
           sequence: data.sequence,
           visibility: data.visibility,
@@ -632,7 +556,6 @@ const visibilityModels = {
   sections: prisma.section,
   subsections: prisma.subsection,
   'learning-items': prisma.learningItem,
-  quizzes: prisma.quiz,
   'quiz-items': prisma.quizItem,
 };
 
@@ -686,17 +609,13 @@ app.patch('/admin/:resource/:id/visibility', async (req, res, next) => {
       for (const option of options) await assertAsset(option.assetId, option.type, true);
     }
     if (visibility === 'PUBLIC' && req.params.resource === 'subsections') {
-      const [learningCount, quiz] = await Promise.all([
+      const [learningCount, quizItemCount] = await Promise.all([
         prisma.learningItem.count({ where: { subsectionId: current.id, visibility: 'PUBLIC' } }),
-        prisma.quiz.findUnique({ where: { subsectionId: current.id }, include: { items: { where: { visibility: 'PUBLIC' } } } }),
+        prisma.quizItem.count({ where: { subsectionId: current.id, visibility: 'PUBLIC' } }),
       ]);
-      if (learningCount < 1 || !quiz || quiz.visibility !== 'PUBLIC' || quiz.items.length < 1) {
+      if (learningCount < 1 || quizItemCount < 1) {
         throw httpError(400, 'Publish at least one learning item and one quiz question before publishing this subsection');
       }
-    }
-    if (visibility === 'PUBLIC' && req.params.resource === 'quizzes') {
-      const itemCount = await prisma.quizItem.count({ where: { quizId: current.id, visibility: 'PUBLIC' } });
-      if (itemCount < 1) throw httpError(400, 'Publish at least one quiz question before publishing this quiz');
     }
     const updated = await model.update({ where: { id: req.params.id }, data: { visibility } });
     res.json({ resource: req.params.resource, id: req.params.id, visibility: updated.visibility });
