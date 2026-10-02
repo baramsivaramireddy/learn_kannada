@@ -9,7 +9,7 @@ type ContentType = "TEXT" | "IMAGE" | "AUDIO";
 type Asset = { id: string; title: string; type: AssetType; url: string; visibility: Visibility; location: string };
 type Option = { id: string; sequence: number; type: ContentType; text: string | null; assetId: string | null; isCorrect: boolean; asset: Asset | null };
 type QuizItem = { id: string; type: "SCQ" | "MCQ" | "SOUND"; sequence: number; questionType: ContentType; questionText: string | null; questionAsset: Asset | null; visibility: Visibility; options: Option[] };
-type LearningItem = { id: string; type: "WORD" | "SOUND"; sequence: number; word: string | null; meaning: string | null; sound: string | null; description: string | null; visibility: Visibility };
+type LearningItem = { id: string; type: "WORD" | "SOUND"; sequence: number; word: string | null; meaning: string | null; sound: string | null; description: string | null; visibility: Visibility; image?: Asset | null; audio?: Asset | null };
 type Subsection = { id: string; title: string; description: string; sequence: number; visibility: Visibility; learningItems: LearningItem[]; quizItems: QuizItem[] };
 type OrderedSubsectionItem = { kind: "learning"; sequence: number; item: LearningItem } | { kind: "quiz"; sequence: number; item: QuizItem };
 type Section = { id: string; title: string; description: string; sequence: number; visibility: Visibility; subsections: Subsection[] };
@@ -77,6 +77,7 @@ export default function AdminPage() {
   const [editSubsectionSequence, setEditSubsectionSequence] = useState("1");
   const [learningType, setLearningType] = useState<"WORD" | "SOUND">("WORD");
   const [learningSequence, setLearningSequence] = useState("1");
+  const [editingLearningItemId, setEditingLearningItemId] = useState("");
   const [word, setWord] = useState("");
   const [meaning, setMeaning] = useState("");
   const [sound, setSound] = useState("");
@@ -86,6 +87,7 @@ export default function AdminPage() {
 
   const [quizType, setQuizType] = useState<"SCQ" | "MCQ" | "SOUND">("SCQ");
   const [quizSequence, setQuizSequence] = useState("1");
+  const [editingQuizItemId, setEditingQuizItemId] = useState("");
   const [questionType, setQuestionType] = useState<ContentType>("TEXT");
   const [questionText, setQuestionText] = useState("");
   const [questionAssetId, setQuestionAssetId] = useState("");
@@ -264,8 +266,12 @@ export default function AdminPage() {
       const payload = learningType === "WORD"
         ? { subsectionId: selectedSubsection.id, type: learningType, sequence: Number(learningSequence), word, meaning, imageAssetId: learningImageId || null, audioAssetId: learningAudioId || null }
         : { subsectionId: selectedSubsection.id, type: learningType, sequence: Number(learningSequence), sound, description: learningDescription || null, audioAssetId: learningAudioId || null };
-      await apiRequest("/admin/learning-items", token, { method: "POST", body: JSON.stringify(payload) });
+      await apiRequest(editingLearningItemId ? `/admin/learning-items/${editingLearningItemId}` : "/admin/learning-items", token, {
+        method: editingLearningItemId ? "PATCH" : "POST",
+        body: JSON.stringify(payload),
+      });
       await loadCatalog(token);
+      setEditingLearningItemId("");
       setWord("");
       setMeaning("");
       setSound("");
@@ -273,7 +279,29 @@ export default function AdminPage() {
       const nextSequence = String(Math.max(Number(learningSequence), Number(nextContentSequence(selectedSubsection)) - 1) + 1);
       setLearningSequence(nextSequence);
       setQuizSequence(nextSequence);
-    }, "Draft learning item created.");
+    }, editingLearningItemId ? "Learning item updated." : "Draft learning item created.");
+  };
+
+  const beginLearningItemEdit = (item: LearningItem) => {
+    setEditingLearningItemId(item.id);
+    setLearningType(item.type);
+    setLearningSequence(String(item.sequence));
+    setWord(item.word || "");
+    setMeaning(item.meaning || "");
+    setSound(item.sound || "");
+    setLearningDescription(item.description || "");
+    setLearningImageId(item.image?.id || "");
+    setLearningAudioId(item.audio?.id || "");
+  };
+
+  const deleteLearningItem = (item: LearningItem) => {
+    const label = item.type === "WORD" ? item.word : item.sound;
+    if (!window.confirm(`Delete learning item "${label}"? This cannot be undone.`)) return;
+    void runAction(async () => {
+      await apiRequest(`/admin/learning-items/${item.id}`, token, { method: "DELETE" });
+      setEditingLearningItemId("");
+      await loadCatalog(token);
+    }, "Learning item deleted.");
   };
 
   const updateOption = (index: number, update: Partial<OptionDraft>) => {
@@ -302,8 +330,8 @@ export default function AdminPage() {
         ...(option.type === "TEXT" ? { text: option.text } : { assetId: option.assetId }),
         isCorrect: option.isCorrect,
       }));
-      await apiRequest("/admin/quiz-items", token, {
-        method: "POST",
+      await apiRequest(editingQuizItemId ? `/admin/quiz-items/${editingQuizItemId}` : "/admin/quiz-items", token, {
+        method: editingQuizItemId ? "PATCH" : "POST",
         body: JSON.stringify({
           subsectionId: selectedSubsection.id,
           type: quizType,
@@ -313,13 +341,39 @@ export default function AdminPage() {
         }),
       });
       await loadCatalog(token);
+      setEditingQuizItemId("");
       setQuestionText("");
       setQuestionAssetId("");
       const nextSequence = String(Math.max(Number(quizSequence), Number(nextContentSequence(selectedSubsection)) - 1) + 1);
       setQuizSequence(nextSequence);
       setLearningSequence(nextSequence);
       setOptions([emptyOption(0), emptyOption(1), emptyOption(2), emptyOption(3)]);
-    }, "Draft quiz question created.");
+    }, editingQuizItemId ? "Quiz question updated." : "Draft quiz question created.");
+  };
+
+  const beginQuizItemEdit = (item: QuizItem) => {
+    setEditingQuizItemId(item.id);
+    setQuizType(item.type);
+    setQuizSequence(String(item.sequence));
+    setQuestionType(item.questionType);
+    setQuestionText(item.questionText || "");
+    setQuestionAssetId(item.questionAsset?.id || "");
+    setOptions(item.options.map((option) => ({
+      id: option.id,
+      type: option.type,
+      text: option.text || "",
+      assetId: option.assetId || "",
+      isCorrect: option.isCorrect,
+    })));
+  };
+
+  const deleteQuizItem = (item: QuizItem) => {
+    if (!window.confirm(`Delete quiz question ${item.sequence}? Its answer options will also be deleted. This cannot be undone.`)) return;
+    void runAction(async () => {
+      await apiRequest(`/admin/quiz-items/${item.id}`, token, { method: "DELETE" });
+      setEditingQuizItemId("");
+      await loadCatalog(token);
+    }, "Quiz question deleted.");
   };
 
   const setVisibility = (resource: string, id: string, visibility: Visibility) => {
@@ -417,13 +471,13 @@ export default function AdminPage() {
               {catalog.sections.map((section, index) => (
                 <div key={section.id}>
                   <div className="flex items-center gap-1">
-                    <button className={`grid min-h-10 min-w-0 flex-1 grid-cols-[21px_minmax(0,1fr)_6px] items-center gap-1.5 px-2 text-left ${section.id === selectedSection?.id ? "bg-neutral-100 text-neutral-900" : "text-neutral-600 hover:bg-neutral-50"}`} onClick={() => { setSelectedSectionId(section.id); setSelectedSubsectionId(section.subsections[0]?.id || ""); const nextSequence = nextContentSequence(section.subsections[0]); setLearningSequence(nextSequence); setQuizSequence(nextSequence); setEditingSectionId(""); setEditingSubsectionId(""); }}>
+                    <button className={`grid min-h-10 min-w-0 flex-1 grid-cols-[21px_minmax(0,1fr)_6px] items-center gap-1.5 px-2 text-left ${section.id === selectedSection?.id ? "bg-neutral-100 text-neutral-900" : "text-neutral-600 hover:bg-neutral-50"}`} onClick={() => { setSelectedSectionId(section.id); setSelectedSubsectionId(section.subsections[0]?.id || ""); const nextSequence = nextContentSequence(section.subsections[0]); setLearningSequence(nextSequence); setQuizSequence(nextSequence); setEditingSectionId(""); setEditingSubsectionId(""); setEditingLearningItemId(""); setEditingQuizItemId(""); }}>
                       <span className="font-mono text-[9px] text-neutral-400">{String(index + 1).padStart(2, "0")}</span><strong className="overflow-hidden text-ellipsis whitespace-nowrap text-[11px] font-semibold">{section.title}</strong><i className={`size-1.5 rounded-full ${section.visibility === "PUBLIC" ? "bg-green-600" : "bg-amber-500"}`} />
                     </button>
                     {publishButton("sections", section.id, section.visibility)}
                   </div>
                   {section.id === selectedSection?.id && section.subsections.map((subsection) => (
-                    <button key={subsection.id} className={`ml-[19px] flex min-h-8 w-[calc(100%-19px)] items-center gap-2 px-2 text-left text-[10px] ${subsection.id === selectedSubsection?.id ? "text-[#c54832]" : "text-neutral-500 hover:text-neutral-800"}`} onClick={() => { setSelectedSubsectionId(subsection.id); const nextSequence = nextContentSequence(subsection); setLearningSequence(nextSequence); setQuizSequence(nextSequence); setEditingSubsectionId(""); }}><span className={`size-1 rounded-full ${subsection.id === selectedSubsection?.id ? "bg-[#c54832]" : "bg-neutral-400"}`} />{subsection.title}</button>
+                    <button key={subsection.id} className={`ml-[19px] flex min-h-8 w-[calc(100%-19px)] items-center gap-2 px-2 text-left text-[10px] ${subsection.id === selectedSubsection?.id ? "text-[#c54832]" : "text-neutral-500 hover:text-neutral-800"}`} onClick={() => { setSelectedSubsectionId(subsection.id); const nextSequence = nextContentSequence(subsection); setLearningSequence(nextSequence); setQuizSequence(nextSequence); setEditingSubsectionId(""); setEditingLearningItemId(""); setEditingQuizItemId(""); }}><span className={`size-1 rounded-full ${subsection.id === selectedSubsection?.id ? "bg-[#c54832]" : "bg-neutral-400"}`} />{subsection.title}</button>
                   ))}
                 </div>
               ))}
@@ -478,8 +532,8 @@ export default function AdminPage() {
                 <div className="flex flex-wrap gap-4 border-y border-neutral-200 py-2.5 text-[9px] text-neutral-500"><span>{selectedSection?.title}</span><span>{selectedSubsection.learningItems.length} learning items</span><span>{selectedSubsection.quizItems.length} quiz questions</span></div>
                 <div className="grid">
                   {orderedSubsectionItems.map((entry) => entry.kind === "learning"
-                    ? <div className="grid min-h-[49px] grid-cols-[65px_minmax(80px,.8fr)_minmax(80px,1fr)_auto] items-center gap-[11px] border-b border-neutral-100 max-[640px]:grid-cols-[55px_minmax(45px,.7fr)_minmax(50px,1fr)_auto] max-[640px]:gap-1.5" key={`learning-${entry.item.id}`}><span className="font-mono text-[10px] text-neutral-500">{entry.sequence}</span><strong className="overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-neutral-900 max-[640px]:text-[9px]" lang="kn">{entry.item.type} · {entry.item.type === "WORD" ? entry.item.word : entry.item.sound}</strong><span className="overflow-hidden text-ellipsis whitespace-nowrap text-[10px] text-neutral-500 max-[640px]:text-[8px]">{entry.item.type === "WORD" ? entry.item.meaning : entry.item.description}</span>{publishButton("learning-items", entry.item.id, entry.item.visibility)}</div>
-                    : <div className="grid min-h-[49px] grid-cols-[65px_minmax(80px,.8fr)_minmax(80px,1fr)_auto] items-center gap-[11px] border-b border-neutral-100 max-[640px]:grid-cols-[55px_minmax(45px,.7fr)_minmax(50px,1fr)_auto] max-[640px]:gap-1.5" key={`quiz-${entry.item.id}`}><span className="font-mono text-[10px] text-neutral-500">{entry.sequence}</span><strong className="overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-neutral-900 max-[640px]:text-[9px]">QUIZ · Question {entry.item.sequence}</strong><span className="overflow-hidden text-ellipsis whitespace-nowrap text-[10px] text-neutral-500 max-[640px]:text-[8px]">{entry.item.questionText || entry.item.questionAsset?.title || entry.item.options.length + " options"}</span>{publishButton("quiz-items", entry.item.id, entry.item.visibility)}</div>)}
+                    ? <div className="grid min-h-[49px] grid-cols-[55px_minmax(70px,.8fr)_minmax(60px,1fr)_auto] items-center gap-2 border-b border-neutral-100 max-[640px]:grid-cols-[35px_minmax(42px,.7fr)_minmax(35px,1fr)_auto] max-[640px]:gap-1" key={`learning-${entry.item.id}`}><span className="font-mono text-[10px] text-neutral-500">{entry.sequence}</span><strong className="overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-neutral-900 max-[640px]:text-[9px]" lang="kn">{entry.item.type} · {entry.item.type === "WORD" ? entry.item.word : entry.item.sound}</strong><span className="overflow-hidden text-ellipsis whitespace-nowrap text-[10px] text-neutral-500 max-[640px]:text-[8px]">{entry.item.type === "WORD" ? entry.item.meaning : entry.item.description}</span><div className="flex items-center gap-1"><button type="button" className="min-h-7 border border-neutral-200 bg-white px-2 text-[9px] text-neutral-700 hover:bg-neutral-50" disabled={busy} onClick={() => beginLearningItemEdit(entry.item)}>Edit</button><button type="button" className="min-h-7 border border-red-200 bg-white px-2 text-[9px] text-red-700 hover:bg-red-50" disabled={busy} onClick={() => deleteLearningItem(entry.item)}>Delete</button>{publishButton("learning-items", entry.item.id, entry.item.visibility)}</div></div>
+                    : <div className="grid min-h-[49px] grid-cols-[55px_minmax(70px,.8fr)_minmax(60px,1fr)_auto] items-center gap-2 border-b border-neutral-100 max-[640px]:grid-cols-[35px_minmax(42px,.7fr)_minmax(35px,1fr)_auto] max-[640px]:gap-1" key={`quiz-${entry.item.id}`}><span className="font-mono text-[10px] text-neutral-500">{entry.sequence}</span><strong className="overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-neutral-900 max-[640px]:text-[9px]">QUIZ · Question {entry.item.sequence}</strong><span className="overflow-hidden text-ellipsis whitespace-nowrap text-[10px] text-neutral-500 max-[640px]:text-[8px]">{entry.item.questionText || entry.item.questionAsset?.title || entry.item.options.length + " options"}</span><div className="flex items-center gap-1"><button type="button" className="min-h-7 border border-neutral-200 bg-white px-2 text-[9px] text-neutral-700 hover:bg-neutral-50" disabled={busy} onClick={() => beginQuizItemEdit(entry.item)}>Edit</button><button type="button" className="min-h-7 border border-red-200 bg-white px-2 text-[9px] text-red-700 hover:bg-red-50" disabled={busy} onClick={() => deleteQuizItem(entry.item)}>Delete</button>{publishButton("quiz-items", entry.item.id, entry.item.visibility)}</div></div>)}
                   {!selectedSubsection.learningItems.length && !selectedSubsection.quizItems.length && <p className="my-3 text-[11px] leading-relaxed text-neutral-500">This subsection is empty. Add learning material or quiz questions below.</p>}
                 </div>
               </> : <p className="my-3 text-[11px] leading-relaxed text-neutral-500">Select a lesson in the left navigation to manage its content.</p>}
@@ -487,17 +541,18 @@ export default function AdminPage() {
 
             {selectedSubsection && <>
               <section className={adminPanelClass}>
-                <div className={panelHeadingClass}><div><span className="text-[9px] font-bold tracking-[.12em] text-neutral-500">04 / LEARNING MATERIAL</span><h3 className="mb-0 mt-1.5 font-serif text-xl font-medium">Add a learning item</h3></div><span className="font-mono text-[11px] text-neutral-400">04</span></div>
+                <div className={panelHeadingClass}><div><span className="text-[9px] font-bold tracking-[.12em] text-neutral-500">04 / LEARNING MATERIAL</span><h3 className="mb-0 mt-1.5 font-serif text-xl font-medium">{editingLearningItemId ? "Edit learning item" : "Add a learning item"}</h3></div><span className="font-mono text-[11px] text-neutral-400">04</span></div>
                 <form className={adminFormClass} onSubmit={createLearningItem}>
                   <div className="grid grid-cols-2 gap-[11px] max-[640px]:grid-cols-1"><label className={adminFieldClass}><span>ITEM TYPE</span><select value={learningType} onChange={(event) => setLearningType(event.target.value as "WORD" | "SOUND")}><option value="WORD">Word</option><option value="SOUND">Sound</option></select></label><label className={adminFieldClass}><span>ORDER</span><input type="number" step="0.1" value={learningSequence} onChange={(event) => setLearningSequence(event.target.value)} required /></label></div>
                   {learningType === "WORD" ? <><label className={adminFieldClass}><span>KANNADA WORD</span><input value={word} onChange={(event) => setWord(event.target.value)} lang="kn" placeholder="ಮನೆ" required /></label><label className={adminFieldClass}><span>MEANING</span><input value={meaning} onChange={(event) => setMeaning(event.target.value)} placeholder="House" required /></label>{assetSelect("IMAGE ASSET", "IMAGE", learningImageId, setLearningImageId)}</> : <><label className={adminFieldClass}><span>SOUND</span><input value={sound} onChange={(event) => setSound(event.target.value)} lang="kn" placeholder="ಅ" required /></label><label className={adminFieldClass}><span>DESCRIPTION</span><input value={learningDescription} onChange={(event) => setLearningDescription(event.target.value)} placeholder="Kannada vowel sound" /></label></>}
                   {assetSelect("AUDIO ASSET", "AUDIO", learningAudioId, setLearningAudioId)}
-                  <button className={adminPrimaryClass} type="submit" disabled={busy}>Add draft item <span aria-hidden="true">+</span></button>
+                  {editingLearningItemId && <button className="w-max text-[10px] text-neutral-500 hover:text-neutral-800" type="button" onClick={() => setEditingLearningItemId("")}>Cancel edit</button>}
+                  <button className={adminPrimaryClass} type="submit" disabled={busy}>{editingLearningItemId ? "Save learning item" : "Add draft item"}<span aria-hidden="true">{editingLearningItemId ? "✓" : "+"}</span></button>
                 </form>
               </section>
 
               <section className={adminPanelClass}>
-                <div className={panelHeadingClass}><div><span className="text-[9px] font-bold tracking-[.12em] text-neutral-500">05 / ASSESSMENT</span><h3 className="mb-0 mt-1.5 font-serif text-xl font-medium">Add a quiz question</h3></div><span className="font-mono text-[11px] text-neutral-400">05</span></div>
+                <div className={panelHeadingClass}><div><span className="text-[9px] font-bold tracking-[.12em] text-neutral-500">05 / ASSESSMENT</span><h3 className="mb-0 mt-1.5 font-serif text-xl font-medium">{editingQuizItemId ? "Edit quiz question" : "Add a quiz question"}</h3></div><span className="font-mono text-[11px] text-neutral-400">05</span></div>
                 <form className={adminFormClass} onSubmit={createQuizItem}>
                   <div className="grid grid-cols-2 gap-[11px] max-[640px]:grid-cols-1"><label className={adminFieldClass}><span>QUESTION TYPE</span><select value={quizType} onChange={(event) => { const nextType = event.target.value as "SCQ" | "MCQ" | "SOUND"; setQuizType(nextType); if (nextType === "SOUND") setQuestionType("AUDIO"); }}><option value="SCQ">Single choice</option><option value="MCQ">Multiple choice</option><option value="SOUND">Sound question</option></select></label><label className={adminFieldClass}><span>ORDER</span><input type="number" step="0.1" value={quizSequence} onChange={(event) => setQuizSequence(event.target.value)} required /></label></div>
                   {quizType !== "SOUND" && <label className={adminFieldClass}><span>QUESTION CONTENT</span><select value={questionType} onChange={(event) => setQuestionType(event.target.value as ContentType)}><option value="TEXT">Text</option><option value="IMAGE">Image</option><option value="AUDIO">Audio</option></select></label>}
@@ -511,7 +566,8 @@ export default function AdminPage() {
                     <button className="h-[25px] w-[22px] text-[17px] text-neutral-500 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-25" type="button" title="Remove option" aria-label={`Remove option ${index + 1}`} disabled={options.length <= 2} onClick={() => setOptions((current) => current.filter((_, optionIndex) => optionIndex !== index))}>×</button>
                   </div>)}
                   <button className="w-max py-1 text-[10px] font-semibold text-[#183e35] hover:text-[#c54832]" type="button" onClick={() => setOptions((current) => [...current, emptyOption(current.length)])}>+ Add option</button>
-                  <button className={adminPrimaryClass} type="submit" disabled={busy}>Add draft question <span aria-hidden="true">+</span></button>
+                  {editingQuizItemId && <button className="w-max text-[10px] text-neutral-500 hover:text-neutral-800" type="button" onClick={() => { setEditingQuizItemId(""); setOptions([emptyOption(0), emptyOption(1), emptyOption(2), emptyOption(3)]); }}>Cancel edit</button>}
+                  <button className={adminPrimaryClass} type="submit" disabled={busy}>{editingQuizItemId ? "Save quiz question" : "Add draft question"}<span aria-hidden="true">{editingQuizItemId ? "✓" : "+"}</span></button>
                 </form>
               </section>
             </>}
