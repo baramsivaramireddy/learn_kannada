@@ -216,6 +216,11 @@
       args:
         creates: /etc/letsencrypt/live/dev.learnkannada.co.in/fullchain.pem
 
+    - name: Restart Nginx after certificate configuration
+      ansible.builtin.service:
+        name: nginx
+        state: restarted
+
     - name: Verify HTTPS
       ansible.builtin.uri:
         url: https://127.0.0.1
@@ -224,6 +229,10 @@
           Host: dev.learnkannada.co.in
         status_code: 200
         validate_certs: no
+      register: https_check
+      until: https_check.status == 200
+      retries: 10
+      delay: 3
 
   handlers:
     - name: Reload Nginx
