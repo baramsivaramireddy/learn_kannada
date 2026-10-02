@@ -94,21 +94,20 @@ GET  /db-health
 GET  /catalog/sections
 GET  /catalog/sections/:sectionId
 GET  /catalog/subsections/:subsectionId
-POST /subsections/:subsectionId/quiz/submit
+POST /quiz-items/:quizItemId/check
 ```
 
 Through Nginx, the same routes are available at:
 
 ```text
 GET  https://dev.learnkannada.co.in/api/catalog/sections
-POST https://dev.learnkannada.co.in/api/subsections/:subsectionId/quiz/submit
+POST https://dev.learnkannada.co.in/api/quiz-items/:quizItemId/check
 ```
 
-Catalog routes return PUBLIC content only. Quiz submissions accept
-`{ "answers": [{ "quizItemId": "...", "selectedOptionIds": ["..."] }] }`.
-SCQ and SOUND answers must select one option; MCQ answers must match the full
-correct set. Omitted answers count as incorrect. The API returns the percentage,
-correct-item count, and per-question review without storing learner progress.
+Catalog routes return PUBLIC content only. Quiz-item checks accept
+`{ "selectedOptionIds": ["..."] }`. SCQ and SOUND answers must select one
+option; MCQ answers must match the full correct set. The API returns correctness
+and the correct option IDs without storing learner progress.
 Quiz questions are ordered items belonging directly to a subsection; there is
 no separate Quiz record or pass-percentage threshold.
 

@@ -17,7 +17,7 @@ if (!process.env.DATABASE_URL && process.env.db_username && process.env.db_passw
 }
 
 const { PrismaClient } = require('@prisma/client');
-const { evaluateQuiz } = require('./services/content-service/core');
+const { evaluateQuizItems } = require('./services/content-service/core');
 
 const app = express();
 const port = process.env.PORT || 4000;
@@ -185,19 +185,22 @@ app.get('/catalog/subsections/:subsectionId', async (req, res, next) => {
   }
 });
 
-app.post('/subsections/:subsectionId/quiz/submit', async (req, res, next) => {
+app.post('/quiz-items/:quizItemId/check', async (req, res, next) => {
   try {
-    const subsection = await prisma.subsection.findFirst({
+    const quizItem = await prisma.quizItem.findFirst({
       where: {
-        id: req.params.subsectionId,
+        id: req.params.quizItemId,
         visibility: 'PUBLIC',
-        section: { visibility: 'PUBLIC' },
+        subsection: { visibility: 'PUBLIC', section: { visibility: 'PUBLIC' } },
       },
-      include: { quizItems: quizItemInclude },
+      include: { options: { orderBy: { sequence: 'asc' } } },
     });
-    if (!subsection) return res.status(404).json({ message: 'Subsection not found' });
-    if (subsection.quizItems.length === 0) return res.status(409).json({ message: 'This subsection has no published quiz questions' });
-    res.json({ result: evaluateQuizItems(subsection.id, subsection.quizItems, req.body.answers) });
+    if (!quizItem) return res.status(404).json({ message: 'Quiz question not found' });
+    if (!Array.isArray(req.body.selectedOptionIds)) throw httpError(400, 'selectedOptionIds must be an array');
+    const result = evaluateQuizItems(quizItem.subsectionId, [quizItem], [
+      { quizItemId: quizItem.id, selectedOptionIds: req.body.selectedOptionIds },
+    ]);
+    res.json({ result: result.itemResults[0] });
   } catch (error) {
     next(error);
   }
